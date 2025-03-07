@@ -1,6 +1,6 @@
 # SEV-SNP Attestation Sample with Azure Attestation
 
-This is a minimal .NET console application that interacts with the Microsoft Azure Attestation (MAA) service for SEV-SNP virtual machine attestation. It sends an attestation request, retrieves a signed token, and allows further validation steps.
+This is a minimal .NET console application that interacts with the Microsoft Azure Attestation (MAA) service for SEV-SNP attestation type.
 
 ## Remote Attestation Flow with SEV-SNP
 
@@ -64,10 +64,8 @@ Based on the validated attestation claims, the relying party makes an authorizat
 6. Run the application with an optional SEV-SNP report parameter:
 
    ```sh
-   dotnet run -- "YourBase64EncodedReportHere"
+   dotnet run
    ```
-
-   If no report is provided, the default report will be used.
 
 ### Linux Setup
 
@@ -99,7 +97,7 @@ Based on the validated attestation claims, the relying party makes an authorizat
 5. Run the application:
 
    ```sh
-   dotnet run -- "YourBase64EncodedReportHere"
+   dotnet run
    ```
 
 ## Publishing and Running Standalone Executable

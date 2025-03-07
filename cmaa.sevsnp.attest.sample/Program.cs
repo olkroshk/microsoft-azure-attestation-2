@@ -81,7 +81,7 @@ public class Program
     {
         try
         {
-            var client = new AttestationClient("https://sharedweu.weu.test.attest.azure.net");
+            var client = new AttestationClient("https://<INSTANCE>.attest.azure.net");
             
             var request = new AttestSevSnpVmRequest
             {
