@@ -1,44 +1,33 @@
-﻿using System;
-using System.IdentityModel.Tokens.Jwt;
-using System.Net.Http;
+﻿using System.IdentityModel.Tokens.Jwt;
 using System.Text;
-using System.Threading.Tasks;
 using Newtonsoft.Json;
-using Microsoft.IdentityModel.Tokens;
-using System.Security.Claims;
 
-public class AttestationClient
+public class AttestationClient(string baseUrl)
 {
-    private readonly HttpClient _httpClient;
-    private readonly string _baseUrl;
+    private readonly HttpClient _httpClient = new HttpClient();
+    private readonly string _baseUrl = baseUrl.TrimEnd('/');
     private const string ApiVersion = "2022-08-01";
-
-    public AttestationClient(string baseUrl, HttpClient httpClient = null)
-    {
-        _baseUrl = baseUrl.TrimEnd('/');
-        _httpClient = httpClient ?? new HttpClient();
-    }
 
     public async Task<AttestationResponse> AttestSevSnpVmAsync(AttestSevSnpVmRequest request)
     {
-        if (request == null)
+        if (request != null)
         {
-            throw new ArgumentNullException(nameof(request));
+            var url = $"{_baseUrl}/attest/SevSnpVm?api-version={ApiVersion}";
+            var requestBody = JsonConvert.SerializeObject(request);
+            var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+
+            HttpResponseMessage response = await _httpClient.PostAsync(url, content);
+            string responseContent = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"Error {response.StatusCode}: {responseContent}");
+            }
+
+            return JsonConvert.DeserializeObject<AttestationResponse>(responseContent) ?? throw new InvalidOperationException("Failed to deserialize AttestationResponse");
         }
 
-        var url = $"{_baseUrl}/attest/SevSnpVm?api-version={ApiVersion}";
-        var requestBody = JsonConvert.SerializeObject(request);
-        var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
-
-        HttpResponseMessage response = await _httpClient.PostAsync(url, content);
-        string responseContent = await response.Content.ReadAsStringAsync();
-        
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new HttpRequestException($"Error {response.StatusCode}: {responseContent}");
-        }
-
-        return JsonConvert.DeserializeObject<AttestationResponse>(responseContent);
+        throw new ArgumentNullException(nameof(request));
     }
 }
 
@@ -61,16 +50,16 @@ public class AttestSevSnpVmRequest
 public class RuntimeData
 {
     [JsonProperty("data")]
-    public string Data { get; set; }
+    public required string Data { get; set; }
 
     [JsonProperty("dataType")]
-    public string DataType { get; set; }
+    public required string DataType { get; set; }
 }
 
 public class AttestationResponse
 {
     [JsonProperty("token")]
-    public string Token { get; set; }
+    public required string Token { get; set; }
 }
 
 public class Program
