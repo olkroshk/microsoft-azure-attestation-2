@@ -1,88 +1,22 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Formats.Asn1;
 using System.Text;
+using Microsoft.IdentityModel.Tokens;
 using Newtonsoft.Json;
-
-public class AttestationClient(string baseUrl)
-{
-    private readonly HttpClient _httpClient = new();
-    private readonly string _baseUrl = baseUrl.TrimEnd('/');
-    private const string ApiVersion = "2022-08-01";
-
-    public async Task<AttestationResponse> AttestSevSnpVmAsync(AttestSevSnpVmRequest request)
-    {
-        if (request != null)
-        {
-            var url = $"{_baseUrl}/attest/SevSnpVm?api-version={ApiVersion}";
-            var requestBody = JsonConvert.SerializeObject(request);
-            var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
-
-            HttpResponseMessage response = await _httpClient.PostAsync(url, content);
-            string responseContent = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new HttpRequestException($"Error {response.StatusCode}: {responseContent}");
-            }
-
-            return JsonConvert.DeserializeObject<AttestationResponse>(responseContent) ?? throw new InvalidOperationException("Failed to deserialize AttestationResponse");
-        }
-
-        throw new ArgumentNullException(nameof(request));
-    }
-}
-
-public class AttestSevSnpVmRequest
-{
-    [JsonProperty("report")]
-    public required string Report { get; set; }
-
-    [JsonProperty("runtimeData", NullValueHandling = NullValueHandling.Ignore)]
-    public RuntimeData? RuntimeData { get; set; }
-
-    [JsonProperty("initTimeData", NullValueHandling = NullValueHandling.Ignore)]
-    public InitTimeData? InitTimeData { get; set; }
-
-    [JsonProperty("nonce", NullValueHandling = NullValueHandling.Ignore)]
-    public string? Nonce { get; set; }
-}
-
-public class RuntimeData
-{
-    [JsonProperty("data")]
-    public required string Data { get; set; }
-
-    [JsonProperty("dataType")]
-    public required string DataType { get; set; }
-}
-
-public class InitTimeData
-{
-    [JsonProperty("data")]
-    public required string Data { get; set; }
-
-    [JsonProperty("dataType")]
-    public required string DataType { get; set; }
-}
-
-public class AttestationResponse
-{
-    [JsonProperty("token")]
-    public required string Token { get; set; }
-}
-
-
 public class Program
 {
-    private const string ReportSample = "CiAgICAgICAgewogICAgICAgICAgICAiU25wUmVwb3J0IiA6ICJBUUFBQUFFQUFBQWZBQU1BQUFBQUFBRUFBQUFBQUFBQUFBQUFBQUFBQUFBQ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBRUFBQUFBQUFBQUFBQUFLQUVBQUFBQUFBQUFBQUFBQUFBQUFBQ1ozVVdUcEQ5TEQxOFE4WVZzY3licm93bTVReVVmN2UzQlZaTGpKUXlwNlFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFCS0Z3ODVvX2NDUnk3UXgteTlxYnFfeFREanlxeEhYOTFnZl9TWkYzMFV3bmpGb1ZyUWZPck5VakN1WTlVSDZkQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQTQ3WlQ1cXJJTHhldEE2Sng4dXdPcUc1NzdRMWlTWldyZWVKektvTjdZTF9HTHJnNkVuREZtTlJ1aC1uXzJJS0lBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFEUjFjTEhGWmI2NWdGRFBzMzdZbm1kNHFlRnpBaS1PeHlLVGlhamdVbEhoOUhWd3NjVmx2cm1BVU0temZ0aWVaM2lwNFhNQ0w0N0hJcE9KcU9CU1VlSEFBQUFBQUFBQUNnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQURPQ3NkRGlnOFMza2EzaVFDS2k2NnBVVkV0cEJkLXEyYmw2SGp6QVI4NkwzU2htV1NMMWFBSTZnT2NidDliVy1ZMGNxN0FEbHc2R2xVcWY5cTBvZzlVQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQW9mNldRam9XUUNfemZPaTJWcmpyT2lLTEpxQlM1UmE0Ui15R2x5SnV6LVNJS0l5alhOSUt5b0RrdWctRlVFTmVBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQTN0X0tVbHA1aFJTbkd1dUF2aUpjYzBES1hkV2s2VGxKSDhsVkxwUFJHczdYQWZQNjZMOHd3UkxIbmFIS1BqV2VBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwKICAgICAgICAgICAgIlZjZWtDZXJ0Q2hhaW4iIDogIkxTMHRMUzFDUlVkSlRpQkRSVkpVU1VaSlEwRlVSUzB0TFMwdENrMUpTVVpVUkVORFFYWjFaMEYzU1VKQlowbENRVVJDUjBKbmEzRm9hMmxIT1hjd1FrRlJiM2RQWVVGUVRVRXdSME5YUTBkVFFVWnNRWGRSUTBGblZVRUtiMUozZDBkbldVcExiMXBKYUhaalRrRlJSVWxOUVRCSFExZERSMU5CUm14QmQxRkRRV2RWUVc5blRVTkJWRU5xUVhkSlFrRlVRamROVWxGM1JXZFpSQXBXVVZGTVJFRjBSbUp0WkhCaWJWWnNZMjFzZFZwNlJVeE5RV3RIUVRGVlJVSm9UVU5XVmsxNFJrUkJVMEpuVGxaQ1FXTk5RekZPYUdKdVVtaEpSVTV6Q2xsWVNtaE5VWE4zUTFGWlJGWlJVVWxFUVVwRVVWUkZaazFDTUVkQk1WVkZRMmQzVjFGWFVqSlpWelZxV2xkUloxUlhiR3BqYlRoblVrZFdNbUZYVG13S1kzcEZVMDFDUVVkQk1WVkZRWGQzU2xVd1ZsZE1WVEZ3WWtkR2RVMUNORmhFVkVsNFRVUkZlVTVVU1hwTlJHZDRUVEZ2V0VSVVNUUk5SRVY1VGxSSmVncE5SR2Q0VFRGdmQyVnFSVlZOUWtsSFFURlZSVU4zZDB4U1Z6VnVZVmMxYkZwWVNuQmliV040UTNwQlNrSm5UbFpDUVZsVVFXeFdWRTFTVVhkRloxbEVDbFpSVVVoRVFYUlVXVmMxTUZsVFFrUmlSMFo1V1ZSRlRFMUJhMGRCTVZWRlEwRjNRMUV3UlhoSWVrRmtRbWRPVmtKQmIwMUdhMFpyWkcxR2RWa3lWbXNLU1VVeGNGa3pTblpKUlZKc1pHMXNhbHBZVFhoRlZFRlFRbWRPVmtKQlRVMURSazVHVm1reFYxRXdWa3hOU0ZsM1JVRlpTRXR2V2tsNmFqQkRRVkZaUmdwTE5FVkZRVU5KUkZsblFVVkZOMkU1V1hRMEwzZ3lMMUpzTkd4NldqZzNlakJVVG1oWU1WaFZXVXRGVmtWT1RtUnROVlZDTW5kSU5FUlBXR3c0UkZZM0NtVlBOMUJHTm5oaU5ITkZkbVl2U1ZaeE5tcG1XVlE1VW1oWllVOUxSbTQyVXpaMmRGQXlNbVE0U2xscFZFWjNVR2RQYUVvMlJVcGtOalk1VFdST1dGTUtLMXBxVjBobVFYSnRUbTF4YnpSSlFrWnFRME5CVWtsM1JVRlpTa3QzV1VKQ1FVZGpaVUZGUWtKQlRVTkJVVUYzUm5kWlNrdDNXVUpDUVVkalpVRkZRd3BDUVc5WFEwVXhjR0pIUm5WTVZVbDNUVUpGUjBOcGMwZEJVVkZDYmtoblFrRjNSVVZCZDBsQ1FVUkJVa0puYjNKQ1owVkZRVnA0TkVGUlRVTkNRVTFEQ2tGUlFYZEZVVmxMUzNkWlFrSkJSMk5sUVVWRVFYZFJSRUZuUlVGTlFrVkhRMmx6UjBGUlVVSnVTR2RDUVhkUlJVRjNTVUpCUkVGU1FtZHZja0puUlVVS1FWcDRORUZSVFVaQ1FVMURRVkZCZDBWUldVdExkMWxDUWtGSFkyVkJSVVJDWjFGRVFXZEZRVTFDUlVkRGFYTkhRVkZSUW01SVowSkJkMk5GUVhkSlFncEJSRUZTUW1kdmNrSm5SVVZCV25nMFFWRk5TVUpCVFVOQlUyZDNWRkZaU2t0M1dVSkNRVWRqWlVGRlJVSkZSRTlEYzJSRWFXYzRVek5yWVROcFVVTkxDbWsyTm5CVlZrVjBjRUprSzNFeVltdzJTR3A2UVZJNE5rd3pVMmh0VjFOTU1XRkJTVFpuVDJOaWREbGlWeXRaTUdOeE4wRkViSGMyUjJ4VmNXWTVjVEFLYjJjNVZVMUZXVWREVTNGSFUwbGlNMFJSUlVKRGFrRTFiMEU0ZDBSUldVcFpTVnBKUVZkVlJFSkJTVU5DVVVOb1NFUkJZVUpuYTNGb2EybEhPWGN3UWdwQlVXZDNSRkZaU2xsSldrbEJWMVZFUWtGSlEwSlJRMmxCZDBsQ1RVdE5SRUZuUlVKQk5FbERRVkZDVmpKTGVrNU1lU3RyVjJabFpEVmtTemN4UTJKWkNuVmliRE5LY1RCSmNHVnROVlZwZEhaR1dXdHZNRUZLSzNGQmFEZ3lkVTQ0UTA1UFMyeHVUekk1WW1kVWJtSjFWSFZQV1RGckswcFJiU3RCUjNKWmNYSUtZVWxWVm10WVkycFBVR3RDYjNwUFJrNVlLMnBqY1ZwVGVYb3ZZME54Tm1sR1V6Qm1PSEJoVWtaRmIyTjFXbWRaVG5oUmVsb3ZjMHBaYWtVdk56Qk1ad3B3ZG5KNlRpc3JPVEpYZGxGb2RWVnZXbk51WTJoUFVtdDFNWGRhZUVveFlXZFVia3M0WkZSaWMwdGtOVWRpY1ROTWRsWTJWVWRTU2pCR05TdDNWbTlPQ2pOQ09TOHdVREU0YjNadE1qZHFaR05UVFZKd04wdHVXazF5UWxkMlZFSnNhVmxFV1dsWUwyMTFhbkpqUzBoS1MwMUxTekZrTUd0ak56WnRSME16Y0dRS1VIZE5NMlpUU0ZOMlNFUlFUbGc1UjI1MlJuTXZOVzR5YldGRlMyRnZkV3hsTm10a2VtTXpNR0U0UVhwR1RXUXpiMHhWVlVObE0xSkRPSFk1TldRdldRcEtORUZ3VldaVlRpczNkRVpMZDFNMk1IbGpOa1Z3TUZKbE5GVXdkRlk1UTFOMVIwMVVaVU5CU21adWFFRmlTRXhLYzNGRlEyVkthQ3RDUXpGdVdtOXBDa1Z3YVdNclZWUnpXR1ZtTjBKRGJHSjBaRmh2UzJ3emJrZHZkREJDUlc5T04ydzNWSFZJTW5OdVYxZzVhbVV2Wkc5elVEZDNRbmxpTDFoVmNraE1kMHNLVVdSd1prTlpOemhxVkhKeVdHRTNVMVpCY1ZwTFpDOTJVa1JRWW5oTGNHZHBjVGxUWjJneE1EQkxVM2xaWmxwVE5ITjNjazFTT1ZSQmRtRm5XR1pETXdvMFVWWlVkRzFuY0V0TGJVcGxRWEZtT0hGcWJuTlFSVEoyYW1kR1VUTmpRVmhMV0hGWU5uSlpjVVI1VTIxaEszTlllVkZxTlhWV1UydFViWFFyTlVseENreEVSME4wTTNkYVZUSllMMXBPVTFwaVdqTXdkRGRzWkVoTWJrVnhRbUpLU0ZGcVJWTlVaRlE1T0ZCNWNVc3dUMWcyY21obFdGbFFURWhxV0hGdWVFSUtaR0l6Y1ZobFRXWndMMjgyZGk5V2FqTjRTbXg0WnowOUNpMHRMUzB0UlU1RUlFTkZVbFJKUmtsRFFWUkZMUzB0TFMwS0xTMHRMUzFDUlVkSlRpQkRSVkpVU1VaSlEwRlVSUzB0TFMwdENrMUpTVWRwVkVORFFrUnBaMEYzU1VKQlowbEVRVkZCUWsxRldVZERVM0ZIVTBsaU0wUlJSVUpEYWtFMWIwRTRkMFJSV1VwWlNWcEpRVmRWUkVKQlNVTUtRbEZEYUVoRVFXRkNaMnR4YUd0cFJ6bDNNRUpCVVdkM1JGRlpTbGxKV2tsQlYxVkVRa0ZKUTBKUlEybEJkMGxDVFV0TlJFRm5SVUpOU0hONFJrUkJVd3BDWjA1V1FrRnpUVU13Vm5WYU1teDFXbGRXZVdGWE5XNU5VWE4zUTFGWlJGWlJVVWRGZDBwV1ZYcEZWVTFDU1VkQk1WVkZRbmQzVEZVeVJuVmtSMFZuQ2xFeWVHaGpiVVY0UTNwQlNrSm5UbFpDUVdkTlFXdE9RazFTT0hkSVVWbEVWbEZSUzBSQ1drSmFTRnBvWW0xT2JGcERRazVoVjA1NVlubENSVnBZV25BS1dUSldlazFTU1hkRlFWbEVWbEZSUkVSQmJFSlZhM04wVkZkc2MxbFhOSGRJYUdOT1RXcEJlRTFFU1hsTlZHZDVUa1JKZDFkb1kwNU9SRlY0VFVSSmVRcE5WR2Q1VGtSSmQxZHFRamROVWxGM1JXZFpSRlpSVVV4RVFYUkdZbTFrY0dKdFZteGpiV3gxV25wRlRFMUJhMGRCTVZWRlFtaE5RMVpXVFhoR1JFRlRDa0puVGxaQ1FXTk5RekZPYUdKdVVtaEpSVTV6V1ZoS2FFMVJjM2REVVZsRVZsRlJTVVJCU2tSUlZFVm1UVUl3UjBFeFZVVkRaM2RYVVZkU01sbFhOV29LV2xkUloxUlhiR3BqYlRoblVrZFdNbUZYVG14amVrVlRUVUpCUjBFeFZVVkJkM2RLVlRCV1YweFZNWEJpUjBaMVRVbEpRMGxxUVU1Q1oydHhhR3RwUndvNWR6QkNRVkZGUmtGQlQwTkJaemhCVFVsSlEwTm5TME5CWjBWQmJsVXlaSEp5VGxSbVltaE9VVWxzYkdZclZ6SjVLMUpQUTJKVGVrbGtNV0ZMV21aMENqSlVPWHBxV2xGUGVtcEhZMk5zTVRkcE1XMUpTMWRzTjA1VVkwSXdWbGxZZEROS2VGcFRlazlhYW5OcVRFNVdRVVZPTWsxSGFqbFVhV1ZrVEN0UlpYY0tTMXBZTUVwdFVVVjFXV3B0SzFkTGEzTk1kSGhuWkV4d09VVTNSVnBPZDA1RWNWWXhjakJ4VWxBMWRFSTRUMWRyZVZGaVNXUk1aWFUwWVVONk4yb3ZVd3BzTVVaclFubDBaWFk1YzJKR1IzcDBOMk4zYm1wNmFUbHROMjV2Y1hOckszVlNWa0p3TXl0SmJqTTFVVkJrWTJvNFdXWnNSVzF1U0VKT2RuVlZSRXBvQ2t4RFNrMVhPRXRQYWxBMkt5dFFhR0p6TTJsRGFYUktZMEZPUlhSWE5IRlVUa1p2UzFjelEwaHNZbU5UUTJwVVRUaExjMDVpVlhnelFUaGxhelZGVmt3S2FscFhTREZ3ZERsRk0xUm1jRkkyV0hsbVVVdHVXVFpyYkRWaFJVbFFkMlJYTTJWR1dXRnhRMFpRY2tsdk9YQlJWRFpYZFVSVFVEUktRMWxLWWxwdVpRcExTMGxpV21wNldHdEtkRE5PVVVjek1rVjFhMWxKYlVKaU9WTkRhMjA1SzJaVE5VeGFSbWM1YjJwNmRXSk5XRE1yVG10Q2IxTllTVGRQVUhadVNFMTRDbXAxY0RsdGR6VnpaVFpSVlZZM1IzRndRMEV5VkU1NWNHOXNiWFZSSzJOQllYaFdOMHB4U0VVNFpHdzVjRmRtSzFrellYSmlLemxwYVVaRGQwWjBOR3dLUVd4S2R6VkVNRU5VVWxSRE1WazFXVmRHUkVKRGNrRXZka2R1YlZSdWNVYzRReXRxYWxWQlV6ZGphbXBTT0hFMFQxQm9lVVJ0U2xKUWJtRkRMMXBITlFwMVVEQkxNSG8yUjI5UEx6TjFaVzQ1ZDNGemFFTjFTR1ZuVEZSd1QyVklSVXBTUzNKUlJuSTBVRlpKZDFaUFFqQXJaV0pQTlVabmIzbFBkelF6Ym5sR0NrUTFWVXRDUkhoRlFqUkNTMjh2TUhWQmFVdElURkoyZG1kTVlrOVNZbFU0UzBGU1NYTXhSVzl4UldwdFJqaFZkSEp0VVZkV01taFZhbmQ2Y1hkMlNFWUtaV2s0Y2xCNFRVTkJkMFZCUVdGUFFtOTZRMEp2UkVGa1FtZE9Wa2hSTkVWR1oxRlZUemhhZFVkRGNrUXZWREZwV2tWcFlqUTNaRWhNVEZRNGRpOW5kd3BJZDFsRVZsSXdha0pDWjNkR2IwRlZhR0YzWVRCVlVETjVTM2hXTVUxVlpGRlZhWEl4V0doTE1VWk5kMFZuV1VSV1VqQlVRVkZJTDBKQlozZENaMFZDQ2k5M1NVSkJSRUZQUW1kT1ZraFJPRUpCWmpoRlFrRk5RMEZSVVhkUFoxbEVWbEl3WmtKRVRYZE5WRUYyYjBNeVowczBXWEJoU0ZJd1kwaE5Oa3g1T1hJS1draE9jR0p1VW0xTWJVWjBXa00xYW1JeU1IWmtiVTVzWVhrNU1rMVRPVTVoVjNob1ltazVhbU50ZDNkU1oxbEtTMjlhU1doMlkwNUJVVVZMVFVSdFp3cEVla0ZPUW1kc1oyaHJaMEphVVUxRlFXZEpSa0ZMUldOTlFtOUhRMU54UjFOSllqTkVVVVZDUTBSQlRrSm5iR2RvYTJkQ1dsRk5SVUZuU1VaQlMwbEVDa0ZuUlhkdmQwMURRVkZGUkdkblNVSkJTV2RsVlZGVFkwRm1NMnhFV1hGblYxVXhWblJzUkdKdFNVNDRVekprUXpWcmJWRjZjMW92U0hSQmFsRnVURVVLVUVreGFtZ3paMHBpVEhoTU5tZG1NMHM0YW5oamRIcFBWMjVyV1dOaVpHWk5UMDl5TWpoTFZETTFTV0ZCVWpJd2NtVnJTMUpHY0hSVVNHaGxLMFJHY2dvelFVWjZXa3hFUkRkalYwc3lPUzlIY0ZCcGRGQktSRXREZGtrM1FUUlZaekEyY21zM1NqQjZRbVV4Wm5vdmNXVTBhVEl2UmpFeWNuWm1kME5IV1doakNsSjRVSGszVVVZemNUaG1ValpIUTBwa1FqRlZVVFZUYkhkRGFrWjRSRFIxWlhwVlVucDBTV3hKUVdwTmEzUTNSRVoyUzFKb0t6SjZTeXMxY0d4V1IwY0tSbk5xUkVwMFRYb3lkV1E1ZVRCd2RrOUZOR296WkVnMVNWYzVha2Q0WVZOSFUzUnhUbkpoWW01dWNFWXlNelpGVkhJeEwyRTBNMkk0UmtaTFREVlJUZ3B0ZERoV2NqbDRibGhTY0hwdWNVTlNkbkZxY2l0clZuSmlObVJzWm5WVWJHeHBXR1ZSVkUxc1FtOVNWMFpLVDFKTU9FRmpRa3A0UjFvMFN6SnRXR1owQ213eGFsVTFWRXhsYURWTFdFdzVUbGMzWVM5eFFVOUpWWE15Um1sUGFIRnlkSHBCYUVwU1p6bEphamhSYTFFNVVHc3JZMHRIZW5jMlJXd3pWRE5yUm5JS1JXYzJlbXQ0YlhaTmRXRmlXazl6WkV0bVVtdFhabWhJTWxwTFkxUnNSR1p0U0RGSU1IcHhNRkV5WWtjemRYWmhWbVJwUTNSR1dURk1iRmQ1UWpNNFNncFRNbVpPYzFJdlVIazJkRFZpY2tWS1EwWk9kbnBoUkd0NU5rdGxRelJwYjI0dlkxWm5WV0ZwTjNwNlV6TmlSMUZYZWt0RVMxVXpOVk54VGxVeVYydFFDa2s0ZUVOYU1EQlhkRWxwUzB0R2JsaFhWVkY0ZG14TGJXMW5Xa0pKV1ZCbE1ERjZSREJPT0dGMFJuaHRWMmxUYm1aS2JEWTVNRUk1Y2twd1RsSXZaa2tLWVdwNFExY3pVMlZwZDNNMmNqRmFiU3QwUTNWV1lrMXBUblJ3VXpsVWFHcE9XRFIxZG1VMWRHaDVaa1V5UkdkdmVGSkdkbGt4UTNOdlJqVk5DaTB0TFMwdFJVNUVJRU5GVWxSSlJrbERRVlJGTFMwdExTMEtMUzB0TFMxQ1JVZEpUaUJEUlZKVVNVWkpRMEZVUlMwdExTMHRDazFKU1VkWmVrTkRRa0pMWjBGM1NVSkJaMGxFUVZGQlFVMUZXVWREVTNGSFUwbGlNMFJSUlVKRGFrRTFiMEU0ZDBSUldVcFpTVnBKUVZkVlJFSkJTVU1LUWxGRGFFaEVRV0ZDWjJ0eGFHdHBSemwzTUVKQlVXZDNSRkZaU2xsSldrbEJWMVZFUWtGSlEwSlJRMmxCZDBsQ1RVdE5SRUZuUlVKTlNITjRSa1JCVXdwQ1owNVdRa0Z6VFVNd1ZuVmFNbXgxV2xkV2VXRlhOVzVOVVhOM1ExRlpSRlpSVVVkRmQwcFdWWHBGVlUxQ1NVZEJNVlZGUW5kM1RGVXlSblZrUjBWbkNsRXllR2hqYlVWNFEzcEJTa0puVGxaQ1FXZE5RV3RPUWsxU09IZElVVmxFVmxGUlMwUkNXa0phU0Zwb1ltMU9iRnBEUWs1aFYwNTVZbmxDUlZwWVduQUtXVEpXZWsxU1NYZEZRVmxFVmxGUlJFUkJiRUpWYTNOMFZGZHNjMWxYTkhkSWFHTk9UV3BCZUUxRVNYbE5WR041VFhwQk1WZG9ZMDVPUkZWNFRVUkplUXBOVkdONVRYcEJNVmRxUWpkTlVsRjNSV2RaUkZaUlVVeEVRWFJHWW0xa2NHSnRWbXhqYld4MVducEZURTFCYTBkQk1WVkZRbWhOUTFaV1RYaEdSRUZUQ2tKblRsWkNRV05OUXpGT2FHSnVVbWhKUlU1eldWaEthRTFSYzNkRFVWbEVWbEZSU1VSQlNrUlJWRVZtVFVJd1IwRXhWVVZEWjNkWFVWZFNNbGxYTldvS1dsZFJaMVJYYkdwamJUaG5Va2RXTW1GWFRteGpla1ZUVFVKQlIwRXhWVVZCZDNkS1VWWktURXhWTVhCaVIwWjFUVWxKUTBscVFVNUNaMnR4YUd0cFJ3bzVkekJDUVZGRlJrRkJUME5CWnpoQlRVbEpRME5uUzBOQlowVkJNRXhrTlRKU1NrOWtaV2xLYkhGTE1rcGtjMVp0UkRkR2EzUjFiM1JYZDFneFprNW5DbGMwTVZoWk9WaDZNVWhGYUZOVmJXaE1lamxEZFRsRVNGSnNkbWRLVTA1NFltVlpXWE51U21aMmVXcDRNVTFtVlRCV05YUnJTMmxWTVVWbGMwNUdkR0VLTVd0VVFUQnplazVwYzJSWll6bHBjM0ZyTjIxWVZEVXJTMlpIVW1KbVl6UldMemw2VWtsalJUaHFiRWhPTmpGVE1XcDFPRmc1TXlzMlpIaEVWWEpITWdwVGVuaHhTalJDYUhGNVdXMVZSSEoxVUZoS1UxZzBkbFZqTURGUU4ybzVPRTF3Y1U5VE9UVnlUMUprUjBobFNUVXlUbUY2TlcweVFpdFBLM1pxYzBNd0NqWXdaRE0zYWxrNVRFWmxkVTlRTkUxbGNtazRjV2RtYVRKVE5XdExjV2N2WVVZMllWQjBkVUZhVVZaU04zVXpTMFpaV0ZBMU9WaHRTbWQwWTI5bk1EVUtaMjFKTUZRdlQybDBUR2gxZWxaMmNGcGpUSEJvTUc5a2FDOHhTVkJZY1hnekswMXVha1E1TjBFM1psaHdjVWRrTDNrNFMzaFlOMnByYzFSRmVrRlBad3BpUzBGbFlXMHpiRzByTTNsTFNXTlVXVTFzYzFKTldGQmphazVpU1hadGMwSjVhMFF2TDNoVGJtbDFjM1ZJUW10bmJteEZUa1ZYZURGVlkySlJVWEp6Q2l0blZrUnJkVlpRYUhOdWVrbFNUbWRaZGswME9Ga3JOMHhIYVVwWmJuSnRSVGg0WTNKbGVHVnJRbmh5ZG1FeVZqbFVTbEZ4Yms0elVUVXphM1ExZG1rS1VXa3pLMmREWm0xcmQwTXdSakIwYVhKSldtSk1hMWhRY2xCM2Vsb3dUVGxsVG5ob1NYbFRZakp1Y0VwbVoyNXhlalUxU1RCMU16TjNhRFJ5TUZwT1VRcGxWRWRtZHpBelRVSlZkSGwxZWtkbGMwZHJZM2NyYkc5eFRXRnhNWEZTTkhScVIySlFXWGhEZG5CRGNUY3JUMmR3UTBOdlRVNXBkREoxVEc4NVRURTRDbVpJZWpFd2JFOU5WRGh1VjBGVmRsSmFSbnAwWlZoRGJTczNVRWhrV1ZCc2JWRjNWWGN6VEhabGJrb3ZTVXhZYjFGUVNHWmlhMGd3UTNsUVptaHNNV29LVjJoS1JscGhjME5CZDBWQlFXRk9LMDFJZDNkRVoxbEVWbEl3VUVGUlNDOUNRVkZFUVdkRlIwMUNNRWRCTVZWa1JHZFJWMEpDVTBaeVFuSlNVUzltU1FweVJsaFZlRkl4UWxOTGRsWmxSWEpWVlhwQlVFSm5UbFpJVWsxQ1FXWTRSVUpVUVVSQlVVZ3ZUVVJ2UjBFeFZXUklkMUY2VFVSRmQwdzJRWFJ2UTNWSENrdFhhREJrU0VKNlQyazRkbUV5VW5waFZ6VXdXbWsxYUdKWFVYVlpNamwwVEROYWFscFhjM1prYWtWMlZGZHNjMWxYTkhaWk0wcHpUVVZaUjBOVGNVY0tVMGxpTTBSUlJVSkRha0UxYjBFNGQwUlJXVXBaU1ZwSlFWZFZSRUpCU1VOQ1VVTm9TRVJCWVVKbmEzRm9hMmxIT1hjd1FrRlJaM2RFVVZsS1dVbGFTUXBCVjFWRVFrRkpRMEpSUTJsQmQwbENUVXROUkVGblJVSkJORWxEUVZGRE5tMHdhMFJ3Tm5wMk5FOXFabWQ1SzNwc1pXVm9jM2cyYjJ3d2IyTm5WbVZzQ2tWVWIySndlQ3RGZFVOemNWWkdVbEJMTVdwYU1YTndMMng1WkRrck1HWlJNSEkyTm00M2EyRm5VbXMwUTJFek9XYzJObGRIVkVwTlpVcGtjVmx5YVhjS1UxUnFha1JEUzFaUVUyVnpWMWhaVUZaQmVVUm9iVkExYmpKMkswSlphWEJhVjJod2RuRndZV2xQSzBWSFN6VkpRbEFyTlRjNFVXVlhMM05UYjJ0eVN3cGtTR0ZNUVhoSE1reG9XbmhxT1dGR056Tm1jVU0zVDBGS1dqVmhVRzl1ZHpSU1JUSTVPVVpXWVhKb01WUjRNbVZVTTNkVFoydEVaM1YwUTFSQ01WbHhDbnBVTlVSMWQzWkJaU3RqYnpKRFNWWkplazFFWVcxWmRWTkdhbEJPTUVKRFoyOXFiRGRXSzJKVWIzVTNaRTF6Y1VsMUwxUlhMM0pRUTFnNUwwVlZZM0FLUzBkTGNWQlJNMUFyVGpseU1XaHFSVVpaTVhCc1FtYzVNM1ExTTA5UGJ6UTVSMDVKSzFZeGVuWllVRXhKTm5oSlJsWnphQ3R0ZEc4eVVuUm5SVmd2WlFwd2JVMUxWRTVPTm5CelZ6ZzRjV2MzWXpGb1ZGZDBUalpOWWxKMVVUQjJiU3RQS3k4eWRFdENSakpvT0ZSSVlqazBUM1oyU0VodlJrUndZa05GVEd4eENraHVTVmxvZUhrd1dVdFlSM2xoVnpGT2FtWlZUSGh5Y20xNFZsYzBkMk51TlVVNFIyUmtiWFpPWVRaNVdXMDRjMk5LWVdkRmFURXpiV2hIZFRSS2NXZ0tNMUZWTTNObU9HbFZVMVZ5TURsNFVVUjNTSFJQVVZWV1NYRjRORzFoUWxwUVFuUlRUV1lyY1ZWRWRHcFlVMU54T0d4bVYyTmtPR0pNY2psdFpITlZiZ3BLV2tvd0szUjFVRTFMYlVKdVUwZzROakJzYkV0cksxWndWbEZ6WjNGaWVrUkpkazlNZGtRMlZ6RlZiWEV5TldKdmVFTlpTaXRVZFVKdllUUnpLMGhJQ2tOV2FVRjJaMVE1YTJZdmNrSnhNV1FyYVhacU5uTnJhMGg0ZFhwamVHSnJNWGgyTmxwSGVISjBaVXA0VmtnM1MyeFlOMWxTWkZvMlpVRlNTM2RNWlRRS1FVWmFSVUYzYjB0RFVUMDlDaTB0TFMwdFJVNUVJRU5GVWxSSlJrbERRVlJGTFMwdExTMEsiCiAgICAgICAgfQogICAgICAgIA";
-    private const string RuntimeDataSample = "eyJrZXlzIjpbeyJraWQiOiJIQ0xUcmFuc2ZlcktleSIsImtleV9vcHMiOlsiZW5jcnlwdCJdLCJrdHkiOiJSU0EiLCJlIjoiQVFBQiIsIm4iOiJ1cjA4RGNjakdHelJvM09JcTQ0NW4wMFEzT3RoTUliUjNTV0l6Q2NpY0lNXzduUGlWRjVOQklrbmsyemRIWk4xaWlOaEl6SmV6clhTcVZUN1R5MURsNEFCNXhpQUFxeG83eEdqRnFsTDQ3TkE4V2JaUk14UXR3bHNPalpnRnhvc0ROWEl0NmRNcTdPRGg0bmo2blYySk1TY05mUkt5cjFYRklVSzBYa09XdlZsU2xOWmphQXhqOEg0cFMweU5mTndyMVE5NFZkU24zTFBSdVpCSEU3VnJvZkhSR1NISnJhRGxsZktUMC04b0tXOEVqcE13djFNRV9PZ1BxUHdMeWlSenI5OW1vQjd1eHpqRVZEZTU1RDJpMm1QcmNtVDdrU3NId3A1TzJ4S2hNNjhyZGE2Ri1JVDIxSmdkaFE2bjRIV0NpY3NsQm14NG9xa0kteDVsVnNSa1EifV0sInZtLWNvbmZpZ3VyYXRpb24iOnsic2VjdXJlLWJvb3QiOnRydWUsInNlY3VyZS1ib290LXRlbXBsYXRlLWlkIjoiMTczNGM2ZTgtMzE1NC00ZGRhLWJhNWYtYTg3NGNjNDgzNDIyIiwidHBtLWVuYWJsZWQiOnRydWUsInZtVW5pcXVlSWQiOiJBRTVDQkIyQS1EQzk1LTQ4NzAtQTc0QS1FRTRGQjMzQjFBOUMifX0";
-    private const string InitTimeDataSample = "ADD-ME";
-    
+    private const string ReportSample = AttestationConstants.ReportSample;
+    private const string RuntimeDataSample = AttestationConstants.RuntimeDataSample;
+    private const string InitTimeDataSample = AttestationConstants.InitTimeDataSample;
+
     public static async Task Main(string[] args)
     {
         try
         {
-            var client = new AttestationClient("https://<INSTANCE>.attest.azure.net");
-            
+            var attestationInstanceURL = AttestationConstants.AttestationInstanceURL;
+            var client = new AttestationClient(attestationInstanceURL);
             var request = new AttestSevSnpVmRequest
             {
                 Report = ReportSample,
@@ -91,20 +25,12 @@ public class Program
                     Data = RuntimeDataSample,
                     DataType = "JSON"
                 },
-                /*
-                InitTimeData = new InitTimeData
-                {
-                    Data = InitTimeDataSample,
-                    DataType = "JSON"
-                },
-                */
-                //Nonce = "someNonce12345"
             };
 
             var response = await client.AttestSevSnpVmAsync(request);
             Console.WriteLine("Attestation Token: " + response.Token);
-            
-            if (ValidateJwt(response.Token))
+
+            if (await ValidateJwtAsync(response.Token, attestationInstanceURL))
             {
                 Console.WriteLine("JWT Token is valid.");
             }
@@ -119,23 +45,378 @@ public class Program
         }
     }
 
-    private static bool ValidateJwt(string token)
+    private static async Task<bool> ValidateJwtAsync(string token, string attestationInstanceURL)
     {
+        // TODO: this is needed to temporary ignore the results. 
+        bool validationSucceeded = true;
+
         try
         {
-            var handler = new JwtSecurityTokenHandler();
-            var jwtToken = handler.ReadJwtToken(token);
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var jwtToken = tokenHandler.ReadJwtToken(token);
+
+            if (jwtToken.ValidTo <= DateTime.UtcNow)
+            {
+                Console.WriteLine(">>> JWT has expired.");
+                //return false;
+                validationSucceeded = false;
+            }
             
-            Console.WriteLine("JWT Issuer: " + jwtToken.Issuer);
-            Console.WriteLine("JWT Subject: " + jwtToken.Subject);
-            Console.WriteLine("JWT Expiration: " + jwtToken.ValidTo);
-            // TODO: olga add more validation steps here
-            return jwtToken.ValidTo > DateTime.UtcNow;
+            if (!VerifyIssuer(jwtToken, attestationInstanceURL))
+            {
+                //return false;
+                validationSucceeded = false;
+            }
+
+            var certificates = await RetrieveSigningCertificates(jwtToken);
+            if (certificates == null || certificates.Count < 1)
+            {
+                Console.WriteLine(">>> Failed to retrieve signing certificates.");
+                return false;
+            }
+
+            // Verification Step: Verify Token Signature
+            
+            //var verifyTokenSignatureManuallyResult = VerifyTokenSignatureManually(jwtToken, certificates[0]);
+            //if (!verifyTokenSignatureManuallyResult || !verifyTokenSignatureResult)
+            var verifyTokenSignatureResult = VerifyTokenSignature(jwtToken, certificates[0]);
+            if (!verifyTokenSignatureResult)
+            {
+                Console.WriteLine(">>> Failed to verify token signature.");
+                //return false;
+                validationSucceeded = false;
+            }
+
+            if (!VerifyPlatformFromCertificates(certificates))
+            {
+                Console.WriteLine(">>> Failed to verify platform from signing certificates.");
+                //return false;
+                validationSucceeded = false;
+            }
+
+            if (!VerifyReportDataClaim(jwtToken))
+            {
+                Console.WriteLine(">>> ReportData claim verification failed.");
+                //return false;
+                validationSucceeded = false;
+            }
+
+            if (!VerifyHostDataClaim(jwtToken))
+            {
+                Console.WriteLine(">>> HostData claim verification failed.");
+                //return false;
+                validationSucceeded = false;
+            }
         }
         catch (Exception ex)
         {
-            Console.WriteLine("JWT Validation Error: " + ex.Message);
+            Console.WriteLine(">>> JWT Validation Error: " + ex.Message);
+            //return false;
+            validationSucceeded = false;
+        }
+        return validationSucceeded;
+    }
+
+    /// <summary>
+    /// Verifies that the issuer of the JWT token matches the expected issuer.
+    /// This ensures that the token originates from a trusted source.
+    /// </summary>
+    /// <param name="jwtToken">The JWT token whose issuer needs to be verified.</param>
+    /// <param name="expectedIssuer">The expected issuer value that the token should match.</param>
+    /// <returns>
+    /// Returns <c>true</c> if the token's issuer matches the expected issuer.
+    /// Returns <c>false</c> if the issuer does not match.
+    /// </returns>
+    private static bool VerifyIssuer(JwtSecurityToken jwtToken, string expectedIssuer)
+    {
+        string? issuer = jwtToken.Issuer;
+        Console.WriteLine("JWT Issuer: " + issuer);
+        if (issuer != expectedIssuer)
+        {
+            Console.WriteLine(">>> Issuer mismatch! Token issuer does not match the expected issuer.");
             return false;
         }
+        return true;
+    }
+
+    private static async Task<List<X509Certificate2>?> RetrieveSigningCertificates(JwtSecurityToken jwtToken)
+    {
+        if (jwtToken.Header.TryGetValue("jku", out var jkuObject) && jkuObject is string jku)
+        {
+            Console.WriteLine("JWT Signing Certificates Endpoint (jku): " + jku);
+            return await RetrieveCertificatesFromJku(jku);
+        }
+        return null;
+    }
+
+    private static async Task<List<X509Certificate2>?> RetrieveCertificatesFromJku(string jkuUrl)
+    {
+        try
+        {
+            using HttpClient httpClient = new();
+            string certResponse = await httpClient.GetStringAsync(jkuUrl);
+            //Console.WriteLine("Raw response from " + jkuUrl);
+            //Console.WriteLine(certResponse);
+
+            var jsonResponse = JsonConvert.DeserializeObject<dynamic>(certResponse);
+
+            List<X509Certificate2> certificates = new();
+            if (jsonResponse?.keys != null)
+            {
+                foreach (var key in jsonResponse.keys)
+                {
+                    var certBase64 = key?.x5c[0]?.ToString();
+                    if (!string.IsNullOrEmpty(certBase64))
+                    {
+                        var certBytes = Convert.FromBase64String(certBase64);
+                        certificates.Add(new X509Certificate2(certBytes));
+                    }
+                }
+            }
+            return certificates.Count > 0 ? certificates : null;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(">>> Certificate Retrieval Error: " + ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Verifies the digital signature of a JWT token using the provided X.509 certificate.
+    /// This ensures that the token has been signed by a trusted entity and has not been tampered with.
+    /// </summary>
+    /// <param name="jwtToken">The JWT token whose signature needs to be verified.</param>
+    /// <param name="certificate">The X.509 certificate containing the public key used for signature verification.</param>
+    /// <returns>
+    /// Returns <c>true</c> if the token's signature is valid and was signed by the expected issuer. 
+    /// Returns <c>false</c> if the signature verification fails, the certificate's public key cannot be extracted, 
+    /// or an exception occurs during validation.
+    /// </returns>
+    private static bool VerifyTokenSignature(JwtSecurityToken jwtToken, X509Certificate2 certificate)
+    {
+        try
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var rsa = certificate.GetRSAPublicKey();
+            if (rsa == null)
+            {
+                Console.WriteLine(">>> RSA public key extraction failed from certificate: " + certificate.Subject);
+                return false;
+            }
+
+            // Normalize certificate issuer to match JWT Issuer
+            string normalizedCertIssuer = certificate.Issuer.Replace("CN=", "").Trim();
+
+            var validationParameters = new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new RsaSecurityKey(rsa),
+                ValidateIssuer = true,
+                ValidIssuer = normalizedCertIssuer,
+                ValidateAudience = false,
+                ValidateLifetime = false
+            };
+
+            tokenHandler.ValidateToken(jwtToken.RawData, validationParameters, out _);
+            Console.WriteLine("VerifyTokenSignature - Token signature is valid.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(">>> Token signature validation failed: " + ex.Message);
+            return false;
+        }
+    }
+
+    private static bool VerifyTokenSignatureManually(JwtSecurityToken jwtToken, X509Certificate2 certificate)
+    {
+        try
+        {
+            var rsa = certificate.GetRSAPublicKey();
+            if (rsa == null)
+            {
+                Console.WriteLine(">>> RSA public key extraction failed from certificate: " + certificate.Subject);
+                return false;
+            }
+
+            // Extract signature and signed data
+            var encodedHeaderPayload = jwtToken.EncodedHeader + "." + jwtToken.EncodedPayload;
+            var signatureBytes = Base64Url.DecodeBytes(jwtToken.RawSignature);
+            var dataBytes = Encoding.UTF8.GetBytes(encodedHeaderPayload);
+
+            // Verify the signature manually
+            bool isValid = rsa.VerifyData(dataBytes, signatureBytes, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            if (!isValid)
+            {
+                Console.WriteLine(">>> Token signature verification failed.");
+                return false;
+            }
+
+            // Normalize certificate issuer to match JWT Issuer
+            string normalizedCertIssuer = certificate.Issuer.Replace("CN=", "").Trim();
+
+            // Manual check to compare the Issuer
+            if (jwtToken.Issuer != normalizedCertIssuer)
+            {
+                Console.WriteLine($">>> Issuer mismatch: Token Issuer '{jwtToken.Issuer}' does not match Cert Issuer '{normalizedCertIssuer}'");
+                return false;
+            }
+
+            Console.WriteLine("VerifyTokenSignatureManually - Token signature is valid.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(">>> Token signature validation failed: " + ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Verifies whether the provided certificates contain valid attestation evidence for a SEV-SNP platform.
+    /// This checks if the certificate includes specific Azure Attestation extensions and validates their contents.
+    /// </summary>
+    /// <param name="certificates">A list of X.509 certificates to inspect for platform attestation evidence.</param>
+    /// <returns>
+    /// Returns <c>true</c> if a certificate is found that contains valid SEV-SNP attestation evidence,
+    /// including the required TEE Kind extension and expected platform identifier.
+    /// Returns <c>false</c> if no valid evidence is found or verification fails.
+    /// </returns>
+    private static bool VerifyPlatformFromCertificates(List<X509Certificate2> certificates)
+    {
+        const string MAA_EVIDENCE_CERTIFICATE_EXTENSION_OID = "1.3.6.1.4.1.311.105.1000.1";
+        const string MAA_EVIDENCE_TEEKIND_CERTIFICATE_OID = "1.3.6.1.4.1.311.105.1000.2";
+        try
+        {
+            foreach (var cert in certificates)
+            {
+                bool isSelfSigned = cert.Subject == cert.Issuer;
+                if (isSelfSigned)
+                {
+                    var reportExtension = cert.Extensions[MAA_EVIDENCE_CERTIFICATE_EXTENSION_OID];
+                    if (reportExtension == null)
+                    {
+                        Console.WriteLine("Platform verification failed: Missing report extension.");
+                        return false;
+                    }
+                    AsnReader reportReader = new AsnReader(reportExtension.RawData, AsnEncodingRules.DER);
+                    string reportExtensionValue = reportReader.ReadCharacterString(UniversalTagNumber.UTF8String);
+                    dynamic reportJson = JsonConvert.DeserializeObject(reportExtensionValue);
+                    if (reportJson?["SnpReport"] == null || reportJson?["VcekCertChain"] == null || reportJson?["Endorsements"] == null)
+                    {
+                        Console.WriteLine("Platform verification failed: Missing required evidence in the certificate.");
+                        return false;
+                    }
+
+                    var teeKindExtension = cert.Extensions[MAA_EVIDENCE_TEEKIND_CERTIFICATE_OID];
+                    if (teeKindExtension == null)
+                    {
+                        Console.WriteLine("Platform verification failed: Missing TEE Kind extension.");
+                        return false;
+                    }
+                    AsnReader teeKindReader = new AsnReader(teeKindExtension.RawData, AsnEncodingRules.DER);
+                    string teeKindValue = teeKindReader.ReadCharacterString(UniversalTagNumber.UTF8String);
+                    if (teeKindValue != "acisevsnp")
+                    {
+                        Console.WriteLine("Platform verification failed: TEE Kind mismatch.");
+                        return false;
+                    }
+
+                    Console.WriteLine("Platform verified as ACI SEV-SNP.");
+                    return true;
+                }
+            }
+            Console.WriteLine(">>> No valid certificate found.");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(">>> Platform verification error: " + ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// TODO FIXME
+    /// Verifies if hash of the public key that signed the attestation token matches the report data field.
+    /// Extracts the public key from the attestation token's signing certificate,
+    /// computes its SHA-256 hash, and verifies that it matches the value 
+    /// in the 'x-ms-sevsnpvm-reportdata' claim.
+    /// This ensures that the attestation token was signed by the expected key 
+    /// and maintains the integrity of the attestation process.
+    /// </summary>
+    /// <param name="jwtToken">The JWT token containing attestation claims and the signing certificate.</param>
+    /// <returns>
+    /// Returns <c>true</c> if the computed SHA-256 hash of the signing public key 
+    /// matches the 'x-ms-sevsnpvm-reportdata' claim. Returns <c>false</c> if the claim is missing, 
+    /// the public key cannot be retrieved, or the hash does not match.
+    /// </returns>
+    private static bool VerifyReportDataClaim(JwtSecurityToken jwtToken)
+    {
+        // Extract 'x-ms-sevsnpvm-reportdata' from JWT payload
+        if (!jwtToken.Payload.TryGetValue("x-ms-sevsnpvm-reportdata", out var reportDataObj) || reportDataObj is not string reportData)
+        {
+            Console.WriteLine(">>> Missing 'x-ms-sevsnpvm-reportdata' claim.");
+            return false;
+        }
+
+        try
+        {
+            // Retrieve the public key from the signing certificate
+            using RSA rsa = ((RsaSecurityKey)jwtToken.SigningKey).Rsa;
+            byte[] publicKeyBytes = rsa.ExportSubjectPublicKeyInfo();
+            string publicKeyHash = Convert.ToHexString(SHA256.HashData(publicKeyBytes)).ToLower();
+
+            // Compare
+            if (publicKeyHash == reportData.ToLower())
+            {
+                Console.WriteLine("ReportData matches signing public key hash.");
+                return true;
+            }
+
+            Console.WriteLine(">>> ReportData does NOT match signing public key hash.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($">>> Error during verification: {ex.Message}");
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Validates the 'x-ms-sevsnpvm-hostdata' claim in the attestation token.
+    /// Ensures that the attestation report belongs to Azure Attestation and that the expected policy is enforced.
+    /// For SEV-SNP, this checks if the provided HOST_DATA matches an allowed set of policy hashes.
+    /// </summary>
+    /// <param name="jwtToken">The JWT token containing the attestation claims.</param>
+    /// <returns>True if the claim is valid and matches an expected policy, otherwise false.</returns>
+    private static bool VerifyHostDataClaim(JwtSecurityToken jwtToken)
+    {
+        var expectedValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            // Known valid CCE policy hash
+            "ADD-ME"
+        };
+
+        if (jwtToken.Payload.TryGetValue("x-ms-sevsnpvm-hostdata", out var hostDataObj) && hostDataObj is string hostData)
+        {
+            // Normalize case for comparison
+            string normalizedHostData = hostData.ToLower();
+
+            // Validate against expected policy hashes
+            if (expectedValues.Contains(normalizedHostData))
+            {
+                Console.WriteLine("HostData claim is valid. The attestation policy is correctly enforced.");
+                return true;
+            }
+            Console.WriteLine(">>> Invalid HostData claim.");
+        }
+        else
+        {
+            Console.WriteLine(">>> Missing HostData claim. Attestation policy verification cannot be performed.");
+        }
+        return false;
     }
 }
