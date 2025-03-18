@@ -33,7 +33,7 @@ public class Program
 
             if (await ValidateJwtAsync(response.Token, attestationInstanceURL))
             {
-                Console.WriteLine("JWT Token is valid.");
+                Console.WriteLine("SUCCESS: JWT Token is valid.");
             }
             else
             {
@@ -260,7 +260,7 @@ public class Program
 
                 // Attempt token validation
                 tokenHandler.ValidateToken(jwtToken.RawData, validationParameters, out _);
-                Console.WriteLine($"Token signature verified using certificate: {certificate.Subject}");
+                Console.WriteLine($"SUCCESS: Token signature verified using certificate: {certificate.Subject}");
                 isValid = true; // Mark as valid but continue checking other certificates
             }
             catch (SecurityTokenValidationException ex)
@@ -412,7 +412,7 @@ public class Program
             // Compare
             if (publicKeyHash == reportData.ToLower())
             {
-                Console.WriteLine("ReportData matches signing public key hash.");
+                Console.WriteLine("SUCCESS: ReportData matches signing public key hash.");
                 return true;
             }
 
@@ -440,7 +440,7 @@ public class Program
             string normalizedHostData = hostData.ToLower();
             if (AttestationConstants.ExpectedHostDataValues.Contains(normalizedHostData))
             {
-                Console.WriteLine("HostData claim is valid. The attestation policy is correctly enforced.");
+                Console.WriteLine("SUCCESS: HostData claim is valid. The attestation policy is correctly enforced.");
                 return true;
             }
             Console.WriteLine("ERROR: Invalid HostData claim.");
