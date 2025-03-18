@@ -4,4 +4,11 @@ public static class AttestationConstants
     public const string RuntimeDataSample = "eyJrZXlzIjpbeyJraWQiOiJIQ0xUcmFuc2ZlcktleSIsImtleV9vcHMiOlsiZW5jcnlwdCJdLCJrdHkiOiJSU0EiLCJlIjoiQVFBQiIsIm4iOiJ1cjA4RGNjakdHelJvM09JcTQ0NW4wMFEzT3RoTUliUjNTV0l6Q2NpY0lNXzduUGlWRjVOQklrbmsyemRIWk4xaWlOaEl6SmV6clhTcVZUN1R5MURsNEFCNXhpQUFxeG83eEdqRnFsTDQ3TkE4V2JaUk14UXR3bHNPalpnRnhvc0ROWEl0NmRNcTdPRGg0bmo2blYySk1TY05mUkt5cjFYRklVSzBYa09XdlZsU2xOWmphQXhqOEg0cFMweU5mTndyMVE5NFZkU24zTFBSdVpCSEU3VnJvZkhSR1NISnJhRGxsZktUMC04b0tXOEVqcE13djFNRV9PZ1BxUHdMeWlSenI5OW1vQjd1eHpqRVZEZTU1RDJpMm1QcmNtVDdrU3NId3A1TzJ4S2hNNjhyZGE2Ri1JVDIxSmdkaFE2bjRIV0NpY3NsQm14NG9xa0kteDVsVnNSa1EifV0sInZtLWNvbmZpZ3VyYXRpb24iOnsic2VjdXJlLWJvb3QiOnRydWUsInNlY3VyZS1ib290LXRlbXBsYXRlLWlkIjoiMTczNGM2ZTgtMzE1NC00ZGRhLWJhNWYtYTg3NGNjNDgzNDIyIiwidHBtLWVuYWJsZWQiOnRydWUsInZtVW5pcXVlSWQiOiJBRTVDQkIyQS1EQzk1LTQ4NzAtQTc0QS1FRTRGQjMzQjFBOUMifX0";
     public const string InitTimeDataSample = "ADD-ME";
     public const string AttestationInstanceURL = "https://<INSTANCE>.attest.azure.net";
+    public const string MAA_EVIDENCE_CERTIFICATE_EXTENSION_OID = "1.3.6.1.4.1.311.105.1000.1";
+    public const string MAA_EVIDENCE_TEEKIND_CERTIFICATE_OID = "1.3.6.1.4.1.311.105.1000.2";
+    public static readonly HashSet<string> ExpectedHostDataValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        // Known valid CCE policy hash
+        "0178240eff4ef968efdcd735b8bcee63578c4eb9e4264178f747df149bf57bff"
+    };
 }
