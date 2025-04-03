@@ -1,16 +1,15 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using Microsoft.IdentityModel.Tokens;
+using System.Formats.Asn1;
 using System.IdentityModel.Tokens.Jwt;
+using System.Security.Cryptography;
+using System.Security.Cryptography.Cose;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using Microsoft.IdentityModel.Tokens;
-using Newtonsoft.Json.Linq;
-using System.Text.RegularExpressions;
-using Com.AugustCellars.COSE;
-using PeterO.Cbor;
-using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace maa.jwt.verifier.sevsnp
 {
@@ -46,27 +45,29 @@ namespace maa.jwt.verifier.sevsnp
             try
             {
                 var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token)
-                               ?? throw new Exception("ERROR: JWT token is null.");
+                               ?? throw new Exception("JWT token is null.");
 
-                string certificatesString = await JwtUtils.GetSigningCertificatesAsync(jwt);
-                var selfSignedCerts = JwtUtils.RetrieveSelfSignedSigningCertificates(certificatesString);
-                var selfSignedCert = selfSignedCerts[0];
 
-                var extensionJson = Crypto.GetExtensionValueAsJObject(selfSignedCert, Constants.MAA_EVIDENCE_CERTIFICATE_EXTENSION_OID);
-
-                var vcekCertChainString = Crypto.GetReportValueDecodedString(extensionJson, "VcekCertChain");
-                var endorsementsString = Crypto.GetReportValueDecodedString(extensionJson, "Endorsements");
-                var snpReport = SnpAttestationReport.Parse(Crypto.GetReportValueDecodedBytes(extensionJson, "SnpReport"));
+                string certificatesString = await Utils.GetSigningCertificatesAsync(jwt);
+                var selfSignedCerts = Utils.RetrieveSelfSignedSigningCertificates(certificatesString);
 
                 result &= await ValidateTokenAsync(jwt, certificatesString);
+                result &= VerifyCertificateSignature(selfSignedCerts[0], TrustedValues.MaaRootKey);
+
+                var selfSignedCert = selfSignedCerts[0];
+                var quoteValueJson = Utils.GetExtensionValueAsJson(selfSignedCert, Constants.MAA_EVIDENCE_CERTIFICATE_EXTENSION_OID);
+
+                var vcekCertChainValue = Utils.GetExtensionValueDecodedString(quoteValueJson, "VcekCertChain");
+                var endorsementsValue = Utils.GetExtensionValueDecodedString(quoteValueJson, "Endorsements");
+                var snpReportBytes = Utils.GetExtensionValueDecodedBytes(quoteValueJson, "SnpReport");
+                var snpReportSerialized = SnpAttestationReport.Parse(snpReportBytes);
 
                 result &= ValidateTeeKind(selfSignedCert);
-                // missing Report signing validation // Validate that the sevsnp report is signed by the leaf cert in the VCEK cert chain
-                result &= ValidateVcekChainAgainstAmdRoots(vcekCertChainString);
-                result &= VerifyLaunchMeasurement(endorsementsString, snpReport);
-                result &= VerifyUvmEndorsementSignature(endorsementsString);
-                result &= VerifyHostDataClaim(snpReport);
-                result &= VerifyReportData(selfSignedCert, snpReport);
+                result &= VerifySnpReportSignature(snpReportSerialized, vcekCertChainValue);
+                result &= VerifyLaunchMeasurement(endorsementsValue, snpReportSerialized);
+                result &= VerifyUvmEndorsement(endorsementsValue);
+                result &= VerifyHostDataClaim(snpReportSerialized);
+                result &= VerifyReportData(selfSignedCert, snpReportSerialized);
             }
             catch (Exception ex)
             {
@@ -74,6 +75,80 @@ namespace maa.jwt.verifier.sevsnp
                 return false;
             }
             return result;
+        }
+
+        /// <summary>
+        /// Verifies whether a given X.509 certificate was signed by a specified trusted RSA public key.
+        ///
+        /// <para>
+        /// This method performs low-level certificate signature verification by parsing the certificate structure
+        /// according to <b>RFC 5280</b>. It extracts the <c>tbsCertificate</c> (To-Be-Signed portion) from the DER-encoded
+        /// certificate, identifies the hash algorithm from the signature algorithm OID, and then uses the provided
+        /// trusted RSA key to verify the signature over the <c>tbsCertificate</c>.
+        /// </para>
+        ///
+        /// <para>
+        /// Certificate structure (per RFC 5280):
+        /// <code>
+        /// Certificate ::= SEQUENCE {
+        ///     tbsCertificate       TBSCertificate,
+        ///     signatureAlgorithm   AlgorithmIdentifier,
+        ///     signatureValue       BIT STRING
+        /// }
+        /// </code>
+        /// </para>
+        ///
+        /// </summary>
+        /// <param name="certificate">
+        /// The <see cref="X509Certificate2"/> object to be verified. It must be DER-encoded and contain a valid signature.
+        /// </param>
+        /// <param name="trustedKeyPem">
+        /// A PEM-encoded RSA public key that is expected to have signed the given certificate (i.e., the issuer’s public key).
+        /// </param>
+        /// <returns>
+        /// <c>true</c> if the signature on the certificate is valid using the given public key; otherwise, <c>false</c>.
+        /// </returns>
+        /// <remarks>
+        /// Supported signature algorithms (by OID):
+        /// <list type="bullet">
+        /// <item><term>1.2.840.113549.1.1.5</term><description>sha1WithRSAEncryption</description></item>
+        /// <item><term>1.2.840.113549.1.1.11</term><description>sha256WithRSAEncryption</description></item>
+        /// <item><term>1.2.840.113549.1.1.12</term><description>sha384WithRSAEncryption</description></item>
+        /// <item><term>1.2.840.113549.1.1.13</term><description>sha512WithRSAEncryption</description></item>
+        /// </list>
+        /// </remarks>
+        public static bool VerifyCertificateSignature(X509Certificate2 certificate, string trustedKeyPem)
+        {
+            try
+            {
+                using RSA trustedRsa = RSA.Create();
+                trustedRsa.ImportFromPem(trustedKeyPem);
+
+                ReadOnlyMemory<byte> rawData = certificate.RawData;
+                var reader = new AsnReader(rawData, AsnEncodingRules.DER);
+
+                var certSequence = reader.ReadSequence();
+                var tbsCertificateEncoded = certSequence.PeekEncodedValue().ToArray();
+                certSequence.ReadEncodedValue();
+                certSequence.ReadSequence();
+                byte[] signature = certSequence.ReadBitString(out _);
+
+                var hashAlg = certificate.SignatureAlgorithm.Value switch
+                {
+                    "1.2.840.113549.1.1.5" => HashAlgorithmName.SHA1,
+                    "1.2.840.113549.1.1.11" => HashAlgorithmName.SHA256,
+                    "1.2.840.113549.1.1.12" => HashAlgorithmName.SHA384,
+                    "1.2.840.113549.1.1.13" => HashAlgorithmName.SHA512,
+                    _ => throw new NotSupportedException($"Unsupported signature algorithm OID: {certificate.SignatureAlgorithm.Value}")
+                };
+
+                return trustedRsa.VerifyData(tbsCertificateEncoded, signature, hashAlg, RSASignaturePadding.Pkcs1);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR: Signature verification failed: {ex.Message}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -102,7 +177,7 @@ namespace maa.jwt.verifier.sevsnp
 
                 if (validationResult.IsValid)
                 {
-                    Console.WriteLine($"SUCCESS: Token is validated.");
+                    Console.WriteLine("SUCCESS: Validated the signature and expiration of a JWT using the issuer's signing keys retrieved from its JWK endpoint.");
                     return true;
                 }
             }
@@ -113,68 +188,6 @@ namespace maa.jwt.verifier.sevsnp
 
             Console.WriteLine("ERROR: Failed to validate JWT.");
             return false;
-        }
-
-        /// <summary>
-        /// Validates a JWT using a set of trusted RSA public keys.
-        /// </summary>
-        /// <remarks>
-        /// This method performs standard JWT validation, including signature and expiration checks,
-        /// using a set of trusted public keys (typically extracted from PEM-encoded certificates).
-        /// The token is considered valid if it is successfully verified against any of the provided keys.
-        /// </remarks>
-        /// <param name="jwtToken">The JWT token to validate.</param>
-        /// <param name="trustedKeys">A list of trusted RSA public keys used for validation.</param>
-        /// <returns>
-        /// <c>true</c> if the token is successfully validated by at least one trusted key; otherwise, <c>false</c>.
-        /// </returns>
-        private static async Task<bool> ValidateTokenWithTrustedKeysAsync(JwtSecurityToken jwtToken, List<RsaSecurityKey> trustedKeys)
-        {
-            var handler = new JwtSecurityTokenHandler();
-            var isValid = false;
-            var exceptions = new StringBuilder();
-
-            foreach (var key in trustedKeys)
-            {
-                try
-                {
-                    var parameters = new TokenValidationParameters
-                    {
-                        ValidateIssuerSigningKey = true,
-                        IssuerSigningKey = key,
-                        ValidateIssuer = false,
-                        ValidateAudience = false,
-                        ValidateLifetime = true
-                    };
-
-                    var validatedToken = await handler.ValidateTokenAsync(jwtToken.RawData, parameters);
-                    isValid = validatedToken.IsValid;
-
-                    Console.WriteLine($"SUCCESS: Token signature successfully validated using trusted key (KeyId: {key.KeyId ?? "<none>"}).");
-                    break; // We can stop here
-                }
-                catch (SecurityTokenValidationException ex)
-                {
-                    exceptions.AppendLine($"WARNING: Signature validation failed with trusted key (KeyId: {key.KeyId ?? "<none>"}): {ex.Message}");
-                }
-                catch (Exception ex)
-                {
-                    exceptions.AppendLine($"WARNING: Unexpected error with trusted key (KeyId: {key.KeyId ?? "<none>"}): {ex.Message}");
-                }
-            }
-
-            if (exceptions.Length > 0)
-            {
-                Console.WriteLine("Validation attempts summary:");
-                Console.WriteLine(exceptions.ToString());
-            }
-
-            if (!isValid)
-            {
-                Console.WriteLine("ERROR: Failed to verify token signature with any of the trusted keys.");
-            }
-
-            return isValid;
         }
 
         /// <summary>
@@ -191,7 +204,7 @@ namespace maa.jwt.verifier.sevsnp
         {
             try
             {
-                var teeKindValue = Crypto.GetExtensionValueAsUtf8StringByOid(certificate, Constants.MAA_EVIDENCE_TEEKIND_CERTIFICATE_OID);
+                var teeKindValue = Utils.GetExtensionValueAsUtf8String(certificate, Constants.MAA_EVIDENCE_TEEKIND_CERTIFICATE_OID);
 
                 if (teeKindValue == null || teeKindValue != Constants.SevSnpTeeValue)
                 {
@@ -210,82 +223,93 @@ namespace maa.jwt.verifier.sevsnp
         }
 
         /// <summary>
-        /// Validates a VCEK certificate chain by building it and ensuring it is rooted in a trusted AMD root public key.
+        /// Verifies the authenticity of an AMD SEV-SNP attestation report by validating the VCEK certificate chain
+        /// and checking the report’s signature using the leaf VCEK ECDSA public key.
         /// </summary>
+        /// <param name="snpReport">The parsed SEV-SNP attestation report object.</param>
         /// <param name="vcekChainPemString">
-        /// A PEM-encoded certificate chain string, where the first certificate is the VCEK (leaf),
-        /// followed by any intermediate certificates, ending with the root certificate.
+        /// A string containing one or more PEM-encoded X.509 certificates representing the VCEK certificate chain.
+        /// The first certificate is expected to be the VCEK (leaf), and the last should be the AMD root.
         /// </param>
         /// <returns>
-        /// <c>true</c> if the certificate chain is valid and the root certificate's public key matches a known AMD root key; otherwise, <c>false</c>.
+        /// <c>true</c> if the certificate chain is valid and the SEV-SNP report is properly signed by the VCEK key;
+        /// otherwise, <c>false</c>.
         /// </returns>
         /// <remarks>
-        /// This method builds the certificate chain using <see cref="X509Chain"/> and validates it using
-        /// a set of trusted AMD root public keys provided as PEM strings. Only the signature and chain integrity are checked;
-        /// revocation is not validated.
+        /// This method performs the following steps:
+        /// 1. Extracts certificates from the PEM string.
+        /// 2. Ensures the root matches a known AMD trusted root key.
+        /// 3. Validates the full chain from leaf to root.
+        /// 4. Verifies the ECDSA P-384 signature over the SEV-SNP report.
         /// </remarks>
-        private static bool ValidateVcekChainAgainstAmdRoots(string vcekChainPemString)
+        private static bool VerifySnpReportSignature(SnpAttestationReport snpReport, string vcekChainPemString)
         {
             try
             {
-                var trustedRoots = new[] { Crypto.PemStringToRsa(Constants.AmdProdRootKey), Crypto.PemStringToRsa(Constants.AmdProdRootKeyGenoa) };
-
+                // Parse PEM chain
                 var certMatches = Regex.Matches(vcekChainPemString, "-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", RegexOptions.Singleline);
-                if (certMatches.Count < 1)
+                if (certMatches.Count == 0)
                 {
-                    Console.WriteLine("ERROR: Failed to validate vcek chain. No certificates found in the VCEK chain.");
+                    Console.WriteLine("ERROR: No certificates found in VCEK chain.");
                     return false;
                 }
 
-                // Convert PEMs to X509Certificate2 instances
-                var certs = certMatches
-                    .Select(certMatch => new X509Certificate2(Encoding.ASCII.GetBytes(certMatch.Value)))
+                var certificates = certMatches
+                    .Select(match => new X509Certificate2(Encoding.ASCII.GetBytes(match.Value)))
                     .ToList();
 
-                var leaf = certs[0];
-                var intermediates = certs.Skip(1).ToList();
-
-                using var chain = new X509Chain();
-                chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-                chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
-
-                foreach (var intermediate in intermediates)
+                var leafCert = certificates.FirstOrDefault();
+                var rootCert = certificates.LastOrDefault();
+                if (leafCert == null || rootCert == null)
                 {
-                    chain.ChainPolicy.ExtraStore.Add(intermediate);
-                }
-
-                bool isValidChain = chain.Build(leaf);
-                if (!isValidChain)
-                {
-                    Console.WriteLine("ERROR: Failed to validate vcek chain. Chain build failed.");
+                    Console.WriteLine("ERROR: Missing leaf or root certificate.");
                     return false;
                 }
 
-                var rootCertificate = chain.ChainElements[^1].Certificate;
-                using var rootCertificateKey = rootCertificate.GetRSAPublicKey();
-                if (rootCertificateKey == null)
+                // Match against AMD root keys
+                bool matchedRoot = TrustedValues.AmdRootKeys.Any(pem =>
                 {
-                    Console.WriteLine("ERROR: Failed to validate vcek chain. Could not extract public key from root certificate.");
+                    using var trustedRsa = Utils.PemStringToRsa(pem);
+                    using var rootRsa = rootCert.GetRSAPublicKey();
+                    return Utils.AreEqual(trustedRsa, rootRsa);
+                });
+
+                if (!matchedRoot)
+                {
+                    Console.WriteLine("ERROR: VCEK root certificate does not match any known AMD trusted root.");
                     return false;
                 }
 
-                foreach (var trustedKey in trustedRoots)
+                // Validate chain
+                if (!Utils.BuildAndValidateCertChain(certificates, TrustedValues.AmdRootKeys.Select(Utils.PemStringToRsa).ToArray(), Utils.CertValidationTarget.Root))
                 {
-                    if (Crypto.AreEqual(rootCertificateKey, trustedKey))
-                    {
-                        Console.WriteLine("SUCCESS: VCEK chain is valid and rooted in a trusted AMD key.");
-                        return true;
-                    }
+                    Console.WriteLine("ERROR: Failed to build or validate VCEK certificate chain.");
+                    return false;
                 }
 
-                Console.WriteLine("ERROR: Failed to validate vcek chain. Root certificate does not match any known AMD trusted public key.");
-                return false;
+                // Verify SEV-SNP signature
+                var ecdsa = leafCert.GetECDsaPublicKey();
+                if (ecdsa == null)
+                {
+                    Console.WriteLine("ERROR: Leaf certificate does not contain a valid ECDSA public key.");
+                    return false;
+                }
+
+                byte[] reportDataToVerify = snpReport.GetSignedPortion();
+                byte[] derEncodedSignature = snpReport.GetDerEncodedSignature();
+                if (ecdsa.VerifyData(reportDataToVerify, derEncodedSignature, HashAlgorithmName.SHA384, DSASignatureFormat.Rfc3279DerSequence))
+                {
+                    Console.WriteLine("SUCCESS: VCEK certificate and SNP report signature verified.");
+                    return true;
+                }
+
+                Console.WriteLine("ERROR: Signature on SEV-SNP report is invalid.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine("ERROR: Failed to validate VCEK chain: " + ex.Message);
-                return false;
+                Console.WriteLine($"ERROR: Exception during SEV-SNP signature verification: {ex}");
             }
+            return false;
         }
 
         /// <summary>
@@ -322,39 +346,45 @@ namespace maa.jwt.verifier.sevsnp
         /// <summary>
         /// Verifies that the launch measurement in the SEV-SNP attestation report matches the value endorsed in the UVM evidence.
         /// </summary>
-        /// <param name="endorsementsString">A JSON string containing UVM endorsement data, including the encoded COSE Sign1 payload.</param>
+        /// <param name="endorsementsValue">A JSON string containing UVM endorsement data, including the encoded COSE Sign1 payload.</param>
         /// <param name="snpReport">The parsed SEV-SNP attestation report.</param>
         /// <returns>
         /// <c>true</c> if the launch measurement in the attestation report matches the endorsed value from the UVM evidence; otherwise, <c>false</c>.
         /// </returns>
-        private static bool VerifyLaunchMeasurement(string endorsementsString, SnpAttestationReport snpReport)
+        private static bool VerifyLaunchMeasurement(string endorsementsValue, SnpAttestationReport snpReport)
         {
             try
             {
-                var sign1Message = (Sign1Message)Message.DecodeFromBytes(GetUvmEndorsement(endorsementsString));
-                var payloadJson = JObject.Parse(Encoding.UTF8.GetString(sign1Message.GetContent()));
+                CoseSign1Message sign1Message = CoseSign1.ExtractUvmEndorsement(endorsementsValue);
+                var payload = sign1Message.Content ?? throw new Exception("COSE message payload is null.");
+                using var payloadJson = JsonDocument.Parse(payload.ToArray());
 
-                var endorsedLaunchMeasurement = payloadJson[Constants.SevSnpClaimNameLaunchMeasurement]?.ToString();
-                var presentedLaunchMeasurement = snpReport.GetMeasurementHex();
+                Console.WriteLine("\tUVM Payload (JSON):");
+                Utils.PrintJsonWithTabs(JsonSerializer.Serialize(payloadJson, new JsonSerializerOptions { WriteIndented = true }));
 
-                var result = string.Equals(endorsedLaunchMeasurement, presentedLaunchMeasurement, StringComparison.Ordinal);
-                if (result)
+                if (payloadJson.RootElement.TryGetProperty(Constants.SevSnpClaimNameLaunchMeasurement, out JsonElement measurement))
                 {
-                    Console.WriteLine($"SUCCESS:  Uvm endorsement '{Constants.SevSnpClaimNameLaunchMeasurement}' value matches SEVSNP report value Launch measurement.");
+                    string endorsedLaunchMeasurement = measurement.ToString();
+                    var presentedLaunchMeasurement = snpReport.GetMeasurementHex();
+
+                    if (string.Equals(endorsedLaunchMeasurement, presentedLaunchMeasurement, StringComparison.Ordinal))
+                    {
+                        Console.WriteLine("SUCCESS: Uvm endorsement launch measurement value matches SEVSNP report value Launch measurement.");
+                        return true;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"\tSEVSNP report launch measurement value :\t\t{presentedLaunchMeasurement}");
+                        Console.WriteLine($"\tUvm endorsement '{Constants.SevSnpClaimNameLaunchMeasurement}' :\t{endorsedLaunchMeasurement}");
+
+                        Console.WriteLine($"ERROR: Uvm endorsement '{Constants.SevSnpClaimNameLaunchMeasurement}' value does not match SEVSNP report value Launch measurement.");
+                    }
                 }
-                else
-                {
-                    Console.WriteLine($"ERROR: Uvm endorsement '{Constants.SevSnpClaimNameLaunchMeasurement}' value does not match SEVSNP report value Launch measurement.");
-                }
-                Console.WriteLine($"                    SEVSNP report value launch measurement : {presentedLaunchMeasurement}");
-                Console.WriteLine($"         Uvm endorsement '{Constants.SevSnpClaimNameLaunchMeasurement}' : {endorsedLaunchMeasurement}");
-                return result;
             }
             catch (Exception ex)
             {
                 Console.WriteLine("ERROR: Failed to verify launch measurement: " + ex.Message);
             }
-
             return false;
         }
 
@@ -369,7 +399,7 @@ namespace maa.jwt.verifier.sevsnp
         {
             try
             {
-                string expectedHashHex = Crypto.HashPemWithNullTerminator(cert);
+                string expectedHashHex = HashPemWithNullTerminator(cert);
                 string reportDataHex = snpReport.GetReportDataHex();
                 byte[] reportDataBytes = Convert.FromHexString(reportDataHex);
 
@@ -405,171 +435,153 @@ namespace maa.jwt.verifier.sevsnp
         }
 
         /// <summary>
-        /// Verifies that the UVM endorsement signature chains up to a trusted AMD Certificate Authority (C-ACI).
-        /// This confirms the authenticity of the UVM endorsement by validating its signing certificate
-        /// against a known set of AMD-issued trust anchors.
+        /// Computes the SHA-256 hash of a PEM-encoded RSA public key with a null terminator, for use in
+        /// validating the `report_data` field of an AMD SEV-SNP attestation report.
+        ///
+        /// <para>
+        /// The `report_data` field in the SEV-SNP attestation report includes a 64-byte value, where the
+        /// lower 32 bytes (bytes 0–31) may be set to the SHA-256 hash of the public key used to verify
+        /// the payload's signature. This function generates a hash that can be compared against that
+        /// `report_data` value to ensure the attestation is bound to the specific signing key.
+        /// </para>
+        ///
+        /// <para>
+        /// The input to the hash is constructed as follows:
+        /// - The RSA public key is exported in SubjectPublicKeyInfo (SPKI) format.
+        /// - It is Base64-encoded and wrapped in standard PEM boundaries:
+        ///   <c>-----BEGIN PUBLIC KEY-----</c> and <c>-----END PUBLIC KEY-----</c>.
+        /// - The Base64 content is split into 64-character lines.
+        /// - All line endings use Unix-style LF (`\n`) — no CRLF (`\r\n`).
+        /// - The final PEM string includes a newline (`\n`) after the END line.
+        /// - A single null terminator byte (`0x00`) is appended to the PEM string.
+        /// - The resulting UTF-8 byte array is passed to SHA-256.
+        /// </para>
+        ///
+        /// <para>
+        /// Example hashed content (line endings shown as \n):
+        ///
+        /// <code>
+        /// -----BEGIN PUBLIC KEY-----\n
+        /// MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs+AfUU1TfCR/oN72KXbl\n
+        /// 4WHbnGsHvXabFlFrLcY/hbjwtexu5EzgCxeXvWYQIp6ZE4T38OHeJP28UEy1be98\n
+        /// N8la6nTSnBQc7JNQDQNHMZXHfP43kCVX6ZvLjoeU4Tx+dSymDYKtp2wtsdDeTclp\n
+        /// u3x9mbh6OkDxlJxcO6tts6EBd0foLRwX67wL25XcaoemnvATla+DO+5eOaClT5Xj\n
+        /// 4f+Wi2ZGHe8Dsb2BDZa+ww/lAwQXf085lXlmeLk1YEMkTw5oRJulXQ0aanzhl0FG\n
+        /// eIIXAlE0r3AxLcy++RHNQa9Ci7zKmnKV9+6BbX/r/AMIcxzzxOUeszAz1JpKJ8JZ\n
+        /// dwIDAQAB\n
+        /// -----END PUBLIC KEY-----\n
+        /// \0
+        /// </code>
+        /// </para>
+        ///
+        /// <returns>
+        /// A lowercase hexadecimal string representing the SHA-256 hash of the null-terminated PEM-formatted RSA key.
+        /// This hash should match the lower 32 bytes of the SEV-SNP attestation `report_data` if the key was used
+        /// as the report signer.
+        /// </returns>
+        public static string HashPemWithNullTerminator(X509Certificate2 cert)
+        {
+            RSA? rsa = cert.GetRSAPublicKey();
+            if (rsa == null)
+            {
+                throw new Exception("HashPemWithNullTerminator - rsa is null.");
+            }
+            string pem = Utils.RsaToPem(rsa);
+
+            byte[] pemBytes = Encoding.UTF8.GetBytes(pem);
+            byte[] bytesWithNull = new byte[pemBytes.Length + 1];
+            Buffer.BlockCopy(pemBytes, 0, bytesWithNull, 0, pemBytes.Length);
+            bytesWithNull[^1] = 0;
+
+            string pemHashHex = Convert.ToHexString(SHA256.HashData(bytesWithNull)).ToLowerInvariant();
+            return pemHashHex;
+        }
+
+        /// <summary>
+        /// Verifies a UVM endorsement embedded in an X.509 certificate extension.
+        /// This includes validating the COSE_Sign1 signature, checking the certificate chain against known trust anchors,
+        /// and enforcing Enhanced Key Usage (EKU) if required by the trust policy.
         /// </summary>
-        /// <param name="endorsementsString">A JSON string containing the encoded UVM endorsement.</param>
-        /// <returns>True if the endorsement signature is valid and chains to a trusted AMD C-ACI root; otherwise, false.</returns>
-        private static bool VerifyUvmEndorsementSignature1(string endorsementsString)
+        /// <param name="endorsementsValue">A JSON string containing the UVM endorsement.</param>
+        /// <returns>True if the endorsement is valid and trusted; otherwise, false.</returns>
+        private static bool VerifyUvmEndorsement(string endorsementsValue)
         {
             try
             {
-                var coseSign1Bytes = GetUvmEndorsement(endorsementsString);
-                var certificates = Crypto.ExtractX509CertificatesFromCoseBytes(coseSign1Bytes);
+                CoseSign1Message sign1Message = CoseSign1.ExtractUvmEndorsement(endorsementsValue);
+                var certificates = CoseSign1.ExtractX509Certificates(sign1Message);
+                var signingCert = certificates.FirstOrDefault();
+                var rootCert = certificates.LastOrDefault();
 
-                var trustAnchors = new[]
+                if (signingCert == null || rootCert == null)
+                    throw new Exception("Missing leaf or root certificate.");
+
+                var publicKey = signingCert.GetRSAPublicKey()
+                    ?? throw new Exception("No valid RSA public key found in signing certificate.");
+
+                // Step 1: Verify COSE signature
+                if (!sign1Message.VerifyEmbedded(publicKey))
                 {
-                    Crypto.PemStringToRsa(Constants.UvmEndorsementSigningKeyPrssCA),
-                    Crypto.PemStringToRsa(Constants.UvmEndorsementSigningKeyPrssJan2023)
-                };
-
-                if (Crypto.BuildAndValidateCertChain(certificates, trustAnchors, Crypto.CertValidationTarget.Root))
-                {
-                    // TODO OLGA: check on this. The chain is supposed to be validated for the leaf cert, but it passes for the root 
-                    Console.WriteLine("SUCCESS: UVM Endorsement signature successfully verified against trusted C-ACI root.");
-                    return true;
-
+                    Console.WriteLine("ERROR: COSE message signature is invalid.");
+                    return false;
                 }
-                Console.WriteLine("ERROR: UVM Endorsement signature failed: no trusted root matched.");
+
+                // Step 2: Find a matching trust anchor (based on root public key)
+                var trustAnchor = TrustedValues.UvmEndorsementTrustAnchors.FirstOrDefault(anchor =>
+                {
+                    switch (anchor.Signer)
+                    {
+                        case CoseSign1.TrustedCertChainSigner chainSigner:
+                            {
+                                using var anchorRsa = Utils.PemStringToRsa(chainSigner.CertChain.PemRootCaPublicKey);
+                                using var rootRsa = rootCert.GetRSAPublicKey();
+                                return Utils.AreEqual(anchorRsa, rootRsa);
+                            }
+
+                        case CoseSign1.TrustedKeySigner keySigner:
+                            {
+                                using var anchorRsa = Utils.PemStringToRsa(keySigner.Key.PemSigningPublicKey);
+                                using var leafRsa = signingCert.GetRSAPublicKey();
+                                return Utils.AreEqual(anchorRsa, leafRsa);
+                            }
+
+                        default:
+                            return false;
+                    }
+                });
+                if (trustAnchor == null)
+                {
+                    Console.WriteLine("ERROR: UVM Endorsement signature failed: no trusted root matched.");
+                    return false;
+                }
+
+                // Step 3: Validate full certificate chain (COSE Sign1 Object -> ProtectedHeaders -> x5chain).
+                var trustedRoots = new[] { Utils.PemStringToRsa(((CoseSign1.TrustedCertChainSigner)trustAnchor.Signer).CertChain.PemRootCaPublicKey) };
+                if (!Utils.BuildAndValidateCertChain(certificates, trustedRoots, Utils.CertValidationTarget.Root))
+                {
+                    Console.WriteLine("ERROR: Certificate chain validation failed.");
+                    return false;
+                }
+
+                // Step 4: If EKU is required by trust anchor, check that leaf cert has it
+                if (trustAnchor.Signer is CoseSign1.TrustedCertChainSigner certChain &&
+                    !string.IsNullOrEmpty(certChain.CertChain.LeafCertRequiredEku))
+                {
+                    if (!CoseSign1.HasEku(signingCert, certChain.CertChain.LeafCertRequiredEku!))
+                    {
+                        Console.WriteLine($"ERROR: Leaf certificate does not contain expected EKU: {certChain.CertChain.LeafCertRequiredEku}");
+                        return false;
+                    }
+                }
+
+                Console.WriteLine("SUCCESS: UVM Endorsement signature successfully verified against trusted C-ACI root.");
+                return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine("ERROR: Failed to verify UVM endorsement signature: " + ex);
+                Console.WriteLine($"ERROR: Failed to verify UVM endorsement signature: {ex.Message}");
+                return false;
             }
-
-            return false;
         }
-
-        private static byte[] GetUvmEndorsement(string endorsementsString)
-        {
-            var endorsementsJson = JObject.Parse(endorsementsString);
-            var uvmArray = endorsementsJson["Uvm"] as JArray;
-            if (uvmArray == null || uvmArray.Count != 1)
-            {
-                throw new Exception("Invalid 'Uvm' array in endorsements.");
-            }
-
-            // Uvm endorsement is expected to be a base64url for a COSE Sign1 document.
-            var rawEndorsement = uvmArray[0].ToString();
-            var endorsementBytes = Base64UrlEncoder.DecodeBytes(rawEndorsement);
-            return endorsementBytes;
-        }
-
-
-
-
-
-        private static bool VerifyUvmEndorsementSignature(string endorsementsString)
-        {
-            try
-            {
-                var trustAnchors = new[] { Crypto.PemStringToRsa(Constants.UvmEndorsementSigningKeyPrssCA), Crypto.PemStringToRsa(Constants.UvmEndorsementSigningKeyPrssJan2023) };
-
-                var coseSign1Bytes = GetUvmEndorsement(endorsementsString);
-                var certificates = Crypto.ExtractX509CertificatesFromCoseBytes(coseSign1Bytes);
-                if (certificates.Count == 0)
-                {
-                    Console.WriteLine("ERROR: No certificates found in UVM endorsement x5chain.");
-                    return false;
-                }
-
-                var cose = CBORObject.DecodeFromBytes(coseSign1Bytes);
-                if (cose.Type != CBORType.Array || cose.Count != 4)
-                {
-                    Console.WriteLine("ERROR: Invalid COSE_Sign1 structure.");
-                    return false;
-                }
-
-                byte[] protectedHeaderBytes = cose[0].GetByteString();
-                CBORObject protectedHeaders = CBORObject.DecodeFromBytes(protectedHeaderBytes);
-                byte[] payloadBytes = cose[2].GetByteString();
-                byte[] signatureBytes = cose[3].GetByteString();
-
-                if (!protectedHeaders.ContainsKey(1))
-                {
-                    Console.WriteLine("ERROR: 'alg' field (key 1) missing in protected headers.");
-                    return false;
-                }
-
-                int algId = protectedHeaders[1].AsInt32();
-                HashAlgorithmName hashAlg = algId switch
-                {
-                    -37 => HashAlgorithmName.SHA384, // PS384
-                    -38 => HashAlgorithmName.SHA512, // PS512
-                    -39 => HashAlgorithmName.SHA256, // PS256
-                    _ => throw new InvalidOperationException($"Unsupported COSE algorithm: {algId}")
-                };
-
-                var sigStructure = CBORObject.NewArray();
-                sigStructure.Add("Signature1");
-                sigStructure.Add(CBORObject.FromObject(protectedHeaderBytes));
-                sigStructure.Add(CBORObject.FromObject(new byte[0])); // external_aad = empty
-                sigStructure.Add(CBORObject.FromObject(payloadBytes));
-                byte[] toBeSigned = sigStructure.EncodeToBytes();
-
-                var signingCert = certificates[0];
-                var publicKey = signingCert.GetRSAPublicKey();
-                if (publicKey == null)
-                {
-                    Console.WriteLine("ERROR: No RSA public key found in signing certificate.");
-                    return false;
-                }
-
-                Console.WriteLine($"Key size: {publicKey.KeySize} bits");
-                Console.WriteLine($"alg: {algId}");
-                Console.WriteLine($"payload: {Convert.ToHexString(payloadBytes)}");
-                Console.WriteLine($"signature: {Convert.ToHexString(signatureBytes)}");
-                Console.WriteLine($"toBeSigned: {Convert.ToHexString(toBeSigned)}");
-
-                bool testPkcs1 = publicKey.VerifyData(
-                    toBeSigned,
-                    signatureBytes,
-                    hashAlg,
-                    RSASignaturePadding.Pkcs1);
-
-                Console.WriteLine("PKCS1 test result: " + testPkcs1); //TODO OLGA - remove this
-                bool signatureValid = publicKey.VerifyData(
-                    toBeSigned,
-                    signatureBytes,
-                    hashAlg,
-                    RSASignaturePadding.Pkcs1);
-
-                if (!signatureValid)
-                {
-                    Console.WriteLine("ERROR: Signature verification failed.");
-                    return false;
-                }
-
-                if (Crypto.BuildAndValidateCertChain(certificates, trustAnchors, Crypto.CertValidationTarget.Root))
-                {
-                    Console.WriteLine("SUCCESS: UVM Endorsement signature successfully verified against trusted C-ACI root.");
-                    return true;
-                }
-                Console.WriteLine("ERROR: Certificate chain is not rooted in a trusted C-ACI.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ERROR: Exception during UVM endorsement signature verification: {ex.Message}");
-            }
-
-            return false;
-        }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    } // Program
+    }
 }

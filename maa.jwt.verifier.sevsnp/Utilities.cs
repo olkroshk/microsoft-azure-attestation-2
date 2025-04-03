@@ -6,14 +6,12 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Security.Cryptography;
 using System.Formats.Asn1;
-using Newtonsoft.Json.Linq;
 using System.IdentityModel.Tokens.Jwt;
-using Newtonsoft.Json;
-using PeterO.Cbor;
+using System.Text.Json;
 
 namespace maa.jwt.verifier.sevsnp
 {
-    public static class JwtUtils
+    public static class Utils
     {
         /// <summary>
         /// Retrieves the JSON Web Key Set (JWKS) from the 'jku' (JWK Set URL) specified in the JWT header.
@@ -28,7 +26,7 @@ namespace maa.jwt.verifier.sevsnp
                 throw new Exception("Missing or invalid 'jku' header in JWT.");
             }
 
-            Console.WriteLine($"JWT Signing Certificates Endpoint (jku): {jkuUrl}");
+            Console.WriteLine($"\tJWT Signing Certificates Endpoint (jku): {jkuUrl}");
 
             using var httpClient = new HttpClient();
             string jwkSetJson = await httpClient.GetStringAsync(jkuUrl)
@@ -37,38 +35,41 @@ namespace maa.jwt.verifier.sevsnp
             return jwkSetJson;
         }
 
-        public static void PrintKeyHash(X509Certificate2 cert)
-        {
-            var hash = Crypto.HashPemWithNullTerminator(cert);
-            Console.WriteLine($"Null Terminated SHA-256 Hash: {hash}");
-        }
-
         public static List<X509Certificate2> RetrieveSelfSignedSigningCertificates(string certificatesString)
         {
             try
             {
-                var certificatesJson = JsonConvert.DeserializeObject<dynamic>(certificatesString);
+                using var doc = JsonDocument.Parse(certificatesString);
+                var root = doc.RootElement;
+
                 List<X509Certificate2> certificates = [];
 
-                if (certificatesJson?.keys != null)
+                if (root.TryGetProperty("keys", out JsonElement keys) && keys.ValueKind == JsonValueKind.Array)
                 {
-                    foreach (var certificate in certificatesJson.keys)
+                    foreach (var certEntry in keys.EnumerateArray())
                     {
-                        var certBase64 = certificate?.x5c[0]?.ToString();
-                        if (!string.IsNullOrEmpty(certBase64))
+                        if (certEntry.TryGetProperty("x5c", out JsonElement x5cArray) &&
+                            x5cArray.ValueKind == JsonValueKind.Array &&
+                            x5cArray.GetArrayLength() > 0)
                         {
-                            var certBytes = Convert.FromBase64String(certBase64);
-                            var x509Certificate = new X509Certificate2(certBytes);
+                            string certBase64 = x5cArray[0].GetString() ?? throw new Exception("Failed to get certificate string");
 
-                            // Filter to only self-signed certificates (where subject equals issuer)
-                            if (x509Certificate.Subject == x509Certificate.Issuer)
+                            if (!string.IsNullOrEmpty(certBase64))
                             {
-                                certificates.Add(x509Certificate);
+                                var certBytes = Convert.FromBase64String(certBase64);
+                                var x509Certificate = new X509Certificate2(certBytes);
 
-                                // TODO OLGA - delete this
-                                //var kid = certificate?.kid?.ToString();
-                                //Console.WriteLine($"Key ID: {kid}");
-                                //PrintKeyHash(x509Certificate);
+                                // Add only self-signed certificates
+                                if (x509Certificate.Subject == x509Certificate.Issuer)
+                                {
+                                    certificates.Add(x509Certificate);
+
+                                    // Optional logging or debug info:
+                                    if (certEntry.TryGetProperty("kid", out var kidProp))
+                                    {
+                                        Console.WriteLine($"\tKey ID for self signed signing certificate: {kidProp.GetString()}");
+                                    }
+                                }
                             }
                         }
                     }
@@ -78,13 +79,9 @@ namespace maa.jwt.verifier.sevsnp
             }
             catch (Exception ex)
             {
-                throw new Exception($"Certificate Retrieval Error: {ex} for certificate {certificatesString}");
+                throw new Exception($"Certificate retrieval error: {ex.Message}", ex);
             }
         }
-    }
-
-    public class Crypto
-    {
         public static string GetPemFromX509Certificate2(X509Certificate2 cert)
         {
             string pem = RsaToPem(cert.GetRSAPublicKey());
@@ -117,28 +114,6 @@ namespace maa.jwt.verifier.sevsnp
             return pem;
         }
 
-        public static string HashPemWithNullTerminator(RSA? rsa)
-        {
-            if (rsa == null)
-            {
-                throw new Exception("GetHashWithNullTerminator - rsa is null.");
-            }
-            string pem = RsaToPem(rsa);
-
-            byte[] pemBytes = Encoding.UTF8.GetBytes(pem);
-            byte[] bytesWithNull = new byte[pemBytes.Length + 1];
-            Buffer.BlockCopy(pemBytes, 0, bytesWithNull, 0, pemBytes.Length);
-            bytesWithNull[^1] = 0;
-
-            string pemHashHex = Convert.ToHexString(SHA256.HashData(bytesWithNull)).ToLowerInvariant();
-            return pemHashHex;
-        }
-
-        public static string HashPemWithNullTerminator(X509Certificate2 cert)
-        {
-            return HashPemWithNullTerminator(cert.GetRSAPublicKey());
-        }
-
         public static byte[] PemStringToRsaBytes(string pem)
         {
             using var rsa = PemStringToRsa(pem);
@@ -152,7 +127,7 @@ namespace maa.jwt.verifier.sevsnp
             return rsa;
         }
 
-        public static bool AreEqual(RSA a, RSA b)
+        public static bool AreEqual(RSA? a, RSA? b)
         {
             if (a == null || b == null)
             {
@@ -170,7 +145,7 @@ namespace maa.jwt.verifier.sevsnp
                    aParams.Exponent.SequenceEqual(bParams.Exponent);
         }
 
-        public static string GetExtensionValueAsUtf8StringByOid(X509Certificate2 certificate, string oid)
+        public static string GetExtensionValueAsUtf8String(X509Certificate2 certificate, string oid)
         {
             var extension = certificate.Extensions.Cast<X509Extension>().FirstOrDefault(ext => ext.Oid?.Value == oid)
                             ?? throw new Exception($"Failed to retrieve X509 certificate extension with OID {oid}.");
@@ -178,35 +153,39 @@ namespace maa.jwt.verifier.sevsnp
             return asnValue.ReadCharacterString(UniversalTagNumber.UTF8String);
         }
 
-        public static JObject GetExtensionValueAsJObject(X509Certificate2 certificate, string oid)
+        public static JsonElement GetExtensionValueAsJson(X509Certificate2 certificate, string oid)
         {
-            var extensionValue = Crypto.GetExtensionValueAsUtf8StringByOid(certificate, Constants.MAA_EVIDENCE_CERTIFICATE_EXTENSION_OID);
-            var reportJson = JObject.Parse(extensionValue) ?? throw new Exception($"Failed to parse X509 certificate extension value OID '{oid}' as a JSON object.");
-            return reportJson;
+            var extensionValue = Utils.GetExtensionValueAsUtf8String(certificate, oid);
+            using var doc = JsonDocument.Parse(extensionValue);
+            return doc.RootElement.Clone();
         }
 
-        public static string GetReportValueRaw(JObject reportJson, string reportKey)
+        public static string GetRawValueAsString(JsonElement json, string key)
         {
-            var keyValueRaw = reportJson[reportKey]?.ToString();
-            if (string.IsNullOrEmpty(keyValueRaw))
+            if (!json.TryGetProperty(key, out JsonElement value) || value.ValueKind != JsonValueKind.String)
             {
-                throw new Exception($"Failed to get value '{reportKey}' from the report. '{reportKey}' is null or missing in the report JSON object '{reportJson}'.");
+                throw new Exception($"Failed to get value for the key '{key}'. It is missing or not a string in the JSON object.");
             }
-            return keyValueRaw;
+
+            var stringValue = value.GetString();
+            if (string.IsNullOrEmpty(stringValue))
+            {
+                throw new Exception($"Key '{key}' is present but the value is null or empty.");
+            }
+
+            return stringValue;
         }
 
-        public static byte[] GetReportValueDecodedBytes(JObject reportJson, string reportKey)
+        public static byte[] GetExtensionValueDecodedBytes(JsonElement json, string key)
         {
-            var keyValueEncoded = GetReportValueRaw(reportJson, reportKey);
-            var bytes = Base64UrlEncoder.DecodeBytes(keyValueEncoded);
-            return bytes;
+            string encoded = GetRawValueAsString(json, key);
+            return Base64UrlEncoder.DecodeBytes(encoded);
         }
 
-        public static string GetReportValueDecodedString(JObject reportJson, string reportKey)
+        public static string GetExtensionValueDecodedString(JsonElement json, string key)
         {
-            var keyValueEncoded = GetReportValueRaw(reportJson, reportKey);
-            var keyValueString = Base64UrlEncoder.Decode(keyValueEncoded);
-            return keyValueString;
+            string encoded = GetRawValueAsString(json, key);
+            return Base64UrlEncoder.Decode(encoded);
         }
 
         public enum CertValidationTarget
@@ -217,7 +196,7 @@ namespace maa.jwt.verifier.sevsnp
 
         public static bool BuildAndValidateCertChain(
             List<X509Certificate2>? certs,
-            RSA[] trustedAnchors,
+            RSA[] trustedKeys,
             CertValidationTarget target)
         {
             using var chain = new X509Chain();
@@ -228,7 +207,7 @@ namespace maa.jwt.verifier.sevsnp
             var leafCert = certs?.FirstOrDefault();
             if (leafCert == null || !chain.Build(leafCert))
             {
-                Console.WriteLine("Failed to build certificate chain.");
+                Console.WriteLine("ERROR: Failed to build certificate chain.");
                 return false;
             }
 
@@ -242,21 +221,15 @@ namespace maa.jwt.verifier.sevsnp
             var certPublicKey = certToValidate.GetRSAPublicKey();
             if (certPublicKey == null)
             {
-                Console.WriteLine("Selected certificate does not contain an RSA public key.");
+                Console.WriteLine("ERROR: Selected certificate does not contain an RSA public key.");
                 return false;
             }
 
-            foreach (var trustedKey in trustedAnchors)
+            foreach (var trustedKey in trustedKeys)
             {
-                Console.WriteLine($"\nComparing public keys:\n");
-                var trustedKeyPem = Crypto.RsaToPem(trustedKey);
-                Console.WriteLine($"\tTrusted key PEM \n{trustedKeyPem}");
-                var certPublicKeyPem = Crypto.RsaToPem(certPublicKey);
-                Console.WriteLine($"\t{target} Cert key PEM to verify\n{certPublicKeyPem}");
-
-                if (Crypto.AreEqual(certPublicKey, trustedKey))
+                if (Utils.AreEqual(certPublicKey, trustedKey))
                 {
-                    Console.WriteLine("Certification chain is valid and roots to a trusted key.");
+                    //Console.WriteLine("Certification chain is valid and roots to a trusted key.");
                     return true;
                 }
             }
@@ -264,42 +237,16 @@ namespace maa.jwt.verifier.sevsnp
             return false;
         }
 
-        public static List<X509Certificate2> ExtractX509CertificatesFromCoseBytes(byte[] coseSign1Bytes)
+        public static void PrintJsonWithTabs(string json)
         {
-            // Parse the COSE_Sign1 message as CBOR array
-            CBORObject cose = CBORObject.DecodeFromBytes(coseSign1Bytes);
+            var formatted = JsonSerializer.Serialize(
+                JsonDocument.Parse(json).RootElement,
+                new JsonSerializerOptions { WriteIndented = true });
 
-            if (cose.Type != CBORType.Array || cose.Count != 4)
+            foreach (var line in formatted.Split('\n'))
             {
-                throw new Exception("Invalid COSE_Sign1 structure. Expected array of 4 elements.");
+                Console.WriteLine($"\t{line}");
             }
-
-            // COSE_Sign1 structure: [ protected, unprotected, payload, signature ]
-            CBORObject protectedBytes = cose[0];
-            CBORObject unprotectedMap = cose[1];
-
-            // Decode protected headers (they're in a bstr)
-            CBORObject protectedHeaders = CBORObject.DecodeFromBytes(protectedBytes.GetByteString());
-
-            // Look in protected or unprotected for x5chain (header key 33)
-            CBORObject? x5Chain = null;
-            if (protectedHeaders.ContainsKey(CBORObject.FromObject(33)))
-                x5Chain = protectedHeaders[CBORObject.FromObject(33)];
-            else if (unprotectedMap.ContainsKey(CBORObject.FromObject(33)))
-                x5Chain = unprotectedMap[CBORObject.FromObject(33)];
-
-            if (x5Chain == null || x5Chain.Type != CBORType.Array || x5Chain.Count == 0)
-            {
-                throw new Exception("x5chain (header key 33) not found.");
-            }
-
-            List<X509Certificate2> certs = [];
-            int count = x5Chain.Count;
-            for (int i = 0; i < count; ++i)
-            {
-                certs.Add(new X509Certificate2(x5Chain[i].GetByteString()));
-            }
-            return certs;
         }
     }
 }

@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using System.Formats.Asn1;
 using Microsoft.IdentityModel.Tokens;
 
 namespace maa.jwt.verifier.sevsnp
@@ -33,14 +34,19 @@ namespace maa.jwt.verifier.sevsnp
         public byte[] LaunchSvn { get; private set; } = new byte[8];
         public byte[] Reserved3 { get; private set; } = new byte[168];
         public byte[] Signature { get; private set; } = new byte[512];
+        public byte[] RawBytes { get; private set; } = Array.Empty<byte>();
 
         public static SnpAttestationReport Parse(byte[] data)
         {
             if (data.Length != 0x4A0)
+            {
                 throw new ArgumentException($"Expected report length of 0x4A0 (1184) bytes, got {data.Length}.");
+            }
 
             var report = new SnpAttestationReport();
             int offset = 0;
+
+            report.RawBytes = data;
 
             report.Version = BitConverter.ToUInt32(data, offset); offset += 4;
             report.GuestSvn = BitConverter.ToUInt32(data, offset); offset += 4;
@@ -84,10 +90,79 @@ namespace maa.jwt.verifier.sevsnp
             return Parse(bytes);
         }
 
-        public string GetReportDataHex() => BitConverter.ToString(ReportData).Replace("-", "").ToLowerInvariant();
-        public string GetMeasurementHex() => BitConverter.ToString(Measurement).Replace("-", "").ToLowerInvariant();
-        public string GetHostDataHex() => BitConverter.ToString(HostData).Replace("-", "").ToLowerInvariant();
-        public string GetIdKeyDigestHex() => BitConverter.ToString(IdKeyDigest).Replace("-", "").ToLowerInvariant();
+        public string GetReportDataHex() => ToHex(ReportData);
+        public string GetMeasurementHex() => ToHex(Measurement);
+        public string GetHostDataHex() => ToHex(HostData);
+        public string GetIdKeyDigestHex() => ToHex(IdKeyDigest);
+
+        public byte[] GetSignedPortion()
+        {
+            const int signedLength = 0x4A0 - 512;
+            var result = new byte[signedLength];
+            Buffer.BlockCopy(RawBytes, 0, result, 0, signedLength);
+            return result;
+        }
+
+        /// <summary>
+        /// DER-encodes the SEV-SNP ECDSA signature from the report using ASN.1 format.
+        /// This is required for signature validation using standard cryptographic APIs such as ECDsa.VerifyData.
+        /// </summary>
+        /// <remarks>
+        /// SEV-SNP report signature consists of:
+        /// - 72-byte little-endian R component
+        /// - 72-byte little-endian S component
+        /// - 368-byte reserved padding
+        ///
+        /// These are encoded into a DER-encoded ASN.1 SEQUENCE of two INTEGERs (R, S) as specified in:
+        /// - RFC 3279: "Algorithms and Identifiers for the Internet X.509 Public Key Infrastructure"
+        /// - ANSI X9.62 / FIPS 186-4: Digital Signature Standard
+        ///
+        /// Steps:
+        /// 1. Extract R and S components from the signature.
+        /// 2. Convert from little-endian to big-endian byte order.
+        /// 3. Trim leading zeroes (ASN.1 INTEGER requires minimal encoding).
+        /// 4. Write R and S as INTEGERs into an ASN.1 SEQUENCE.
+        /// </remarks>
+        /// <returns>DER-encoded signature as a byte array.</returns>
+        public byte[] GetDerEncodedSignature()
+        {
+            const int componentLen = 72;
+            byte[] rComponent = new byte[componentLen];
+            byte[] sComponent = new byte[componentLen];
+
+            // Step 1: Extract R and S components from the raw signature (little-endian format)
+            Buffer.BlockCopy(Signature, 0, rComponent, 0, componentLen);
+            Buffer.BlockCopy(Signature, componentLen, sComponent, 0, componentLen);
+
+            // Step 2: Convert to big-endian for ASN.1 INTEGER encoding
+            Array.Reverse(rComponent);
+            Array.Reverse(sComponent);
+
+            // Step 3: Remove leading zero bytes for minimal ASN.1 INTEGER representation
+            rComponent = TrimLeadingZeroes(rComponent);
+            sComponent = TrimLeadingZeroes(sComponent);
+
+            // Step 4: Build DER-encoded sequence
+            var writer = new AsnWriter(AsnEncodingRules.DER);
+            writer.PushSequence();
+            writer.WriteIntegerUnsigned(rComponent);
+            writer.WriteIntegerUnsigned(sComponent);
+            writer.PopSequence();
+
+            return writer.Encode();
+        }
+
+        private static byte[] TrimLeadingZeroes(byte[] input)
+        {
+            int index = 0;
+            while (index < input.Length - 1 && input[index] == 0)
+            {
+                index++;
+            }
+            return input[index..];
+        }
+
+        private static string ToHex(byte[] bytes) => Convert.ToHexString(bytes).ToLowerInvariant();
 
     }
 }

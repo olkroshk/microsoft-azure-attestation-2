@@ -12,17 +12,17 @@ namespace maa.jwt.verifier.sevsnp
             if (args.Length > 0)
             {
                 filePath = args[0];
-                Console.WriteLine("Using file provided via command-line argument.");
+                Console.WriteLine("\tUsing file provided via command-line argument.");
             }
             else
             {
-                Console.WriteLine($"No arguments found. Using default file '{defaultFileName}' from project root.");
+                Console.WriteLine($"\tNo arguments found. Using default file '{defaultFileName}' from project root.");
                 string? projectRoot = Directory.GetParent(AppContext.BaseDirectory)?.Parent?.Parent?.Parent?.FullName
                     ?? throw new DirectoryNotFoundException("Unable to determine project root.");
                 filePath = Path.Combine(projectRoot, defaultFileName);
             }
 
-            Console.WriteLine("Resolved File Path: " + Path.GetFullPath(filePath));
+            Console.WriteLine("\tResolved File Path: " + Path.GetFullPath(filePath));
 
             if (!File.Exists(filePath))
             {
