@@ -9,6 +9,8 @@ using Newtonsoft.Json.Linq;
 using System.Text.RegularExpressions;
 using Com.AugustCellars.COSE;
 using PeterO.Cbor;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace maa.jwt.verifier.sevsnp
 {
@@ -409,12 +411,12 @@ namespace maa.jwt.verifier.sevsnp
         /// </summary>
         /// <param name="endorsementsString">A JSON string containing the encoded UVM endorsement.</param>
         /// <returns>True if the endorsement signature is valid and chains to a trusted AMD C-ACI root; otherwise, false.</returns>
-        private static bool VerifyUvmEndorsementSignature(string endorsementsString)
+        private static bool VerifyUvmEndorsementSignature1(string endorsementsString)
         {
             try
             {
                 var coseSign1Bytes = GetUvmEndorsement(endorsementsString);
-                var certificates = Crypto.ExtractX509CertificatesFromBytes(coseSign1Bytes);
+                var certificates = Crypto.ExtractX509CertificatesFromCoseBytes(coseSign1Bytes);
 
                 var trustAnchors = new[]
                 {
@@ -453,5 +455,121 @@ namespace maa.jwt.verifier.sevsnp
             var endorsementBytes = Base64UrlEncoder.DecodeBytes(rawEndorsement);
             return endorsementBytes;
         }
+
+
+
+
+
+        private static bool VerifyUvmEndorsementSignature(string endorsementsString)
+        {
+            try
+            {
+                var trustAnchors = new[] { Crypto.PemStringToRsa(Constants.UvmEndorsementSigningKeyPrssCA), Crypto.PemStringToRsa(Constants.UvmEndorsementSigningKeyPrssJan2023) };
+
+                var coseSign1Bytes = GetUvmEndorsement(endorsementsString);
+                var certificates = Crypto.ExtractX509CertificatesFromCoseBytes(coseSign1Bytes);
+                if (certificates.Count == 0)
+                {
+                    Console.WriteLine("ERROR: No certificates found in UVM endorsement x5chain.");
+                    return false;
+                }
+
+                var cose = CBORObject.DecodeFromBytes(coseSign1Bytes);
+                if (cose.Type != CBORType.Array || cose.Count != 4)
+                {
+                    Console.WriteLine("ERROR: Invalid COSE_Sign1 structure.");
+                    return false;
+                }
+
+                byte[] protectedHeaderBytes = cose[0].GetByteString();
+                CBORObject protectedHeaders = CBORObject.DecodeFromBytes(protectedHeaderBytes);
+                byte[] payloadBytes = cose[2].GetByteString();
+                byte[] signatureBytes = cose[3].GetByteString();
+
+                if (!protectedHeaders.ContainsKey(1))
+                {
+                    Console.WriteLine("ERROR: 'alg' field (key 1) missing in protected headers.");
+                    return false;
+                }
+
+                int algId = protectedHeaders[1].AsInt32();
+                HashAlgorithmName hashAlg = algId switch
+                {
+                    -37 => HashAlgorithmName.SHA384, // PS384
+                    -38 => HashAlgorithmName.SHA512, // PS512
+                    -39 => HashAlgorithmName.SHA256, // PS256
+                    _ => throw new InvalidOperationException($"Unsupported COSE algorithm: {algId}")
+                };
+
+                var sigStructure = CBORObject.NewArray();
+                sigStructure.Add("Signature1");
+                sigStructure.Add(CBORObject.FromObject(protectedHeaderBytes));
+                sigStructure.Add(CBORObject.FromObject(new byte[0])); // external_aad = empty
+                sigStructure.Add(CBORObject.FromObject(payloadBytes));
+                byte[] toBeSigned = sigStructure.EncodeToBytes();
+
+                var signingCert = certificates[0];
+                var publicKey = signingCert.GetRSAPublicKey();
+                if (publicKey == null)
+                {
+                    Console.WriteLine("ERROR: No RSA public key found in signing certificate.");
+                    return false;
+                }
+
+                Console.WriteLine($"Key size: {publicKey.KeySize} bits");
+                Console.WriteLine($"alg: {algId}");
+                Console.WriteLine($"payload: {Convert.ToHexString(payloadBytes)}");
+                Console.WriteLine($"signature: {Convert.ToHexString(signatureBytes)}");
+                Console.WriteLine($"toBeSigned: {Convert.ToHexString(toBeSigned)}");
+
+                bool testPkcs1 = publicKey.VerifyData(
+                    toBeSigned,
+                    signatureBytes,
+                    hashAlg,
+                    RSASignaturePadding.Pkcs1);
+
+                Console.WriteLine("PKCS1 test result: " + testPkcs1); //TODO OLGA - remove this
+                bool signatureValid = publicKey.VerifyData(
+                    toBeSigned,
+                    signatureBytes,
+                    hashAlg,
+                    RSASignaturePadding.Pkcs1);
+
+                if (!signatureValid)
+                {
+                    Console.WriteLine("ERROR: Signature verification failed.");
+                    return false;
+                }
+
+                if (Crypto.BuildAndValidateCertChain(certificates, trustAnchors, Crypto.CertValidationTarget.Root))
+                {
+                    Console.WriteLine("SUCCESS: UVM Endorsement signature successfully verified against trusted C-ACI root.");
+                    return true;
+                }
+                Console.WriteLine("ERROR: Certificate chain is not rooted in a trusted C-ACI.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR: Exception during UVM endorsement signature verification: {ex.Message}");
+            }
+
+            return false;
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     } // Program
 }

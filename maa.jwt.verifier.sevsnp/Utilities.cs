@@ -264,7 +264,7 @@ namespace maa.jwt.verifier.sevsnp
             return false;
         }
 
-        public static List<X509Certificate2> ExtractX509CertificatesFromBytes(byte[] coseSign1Bytes)
+        public static List<X509Certificate2> ExtractX509CertificatesFromCoseBytes(byte[] coseSign1Bytes)
         {
             // Parse the COSE_Sign1 message as CBOR array
             CBORObject cose = CBORObject.DecodeFromBytes(coseSign1Bytes);
