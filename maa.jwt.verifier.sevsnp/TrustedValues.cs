@@ -78,23 +78,6 @@ HP1qYrnvhzaG1S70vw6OkbaaC9EjiH/uHgAJQGxon7u0Q7xgoREWA/e7JcBQwLg8
         // -----------------------------------------------------------------------------------
 
         /// <summary>
-        /// Public key of the January 2023 PRSS signing certificate used for ACI UVM endorsements.
-        /// This key is expected to expire in January 2024.
-        /// </summary>
-        public const string UvmEndorsementSigningKeyPrssJan2023 = @"
------BEGIN PUBLIC KEY-----
-MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtczxdBvjfCVvCevjsNBc
-ts5qe/y+dG1cTXD8Ge2XNkNA91gwkxvQB2NoQMFmXRkvpH7D/zvhfa1Le110YdzS
-FykKN4eRwh8UZfLHsIVo/JjE7z4gHC6ZX5HONW8Y2eow9Zx5UWb40SKoyj+LMCE6
-srhCyxb/93RYBTKER7ndtdDwhgq0OQtpFRwjt0ThTtURzRMKDsAeGoaex+Kn5cVu
-Xz3CrX6AB3RBDnEg7D8QHnCRjWWR5hldeZCfMqmbBjQwgcyfHVyotpb81BCNbAtc
-0K1Nix5HB8lu+b2XyO8vBiEkA/v6/JA00gg/I1MiF++UB5DYbXGYk2POyQHLe80E
-0BUDogvlszcr0WaoRovi5ilJJhqPNYXCNIw0PNK1hkunSAj+4CA4U3A7zXkV9nF7
-FxpLjDWd45fnUxilXoCmcOqzALP0OLKIQ/2yPVWdicNTN4XFTmEwy2huWMMIF5bR
-4nQNnCAQmdtt5QkJ9WVSZ83LQcCK00yiV5yQARoFQ8lNAgMBAAE=
------END PUBLIC KEY-----";
-
-        /// <summary>
         /// Root CA public key for PRSS signing certificates used by AMD C-ACI.
         /// Endorsements chaining to this root must contain EKU 1.3.6.1.4.1.311.76.59.1.2.
         /// </summary>
@@ -131,25 +114,6 @@ Eg3lefYqWc/Wq+eB5qCxiC0IjAuxz9dsNq+e+QNn2UFzqatFuHFgWBjUFixlutEF
                     "1.3.6.1.4.1.311.76.59.1.2"  // EKU required in leaf cert
                 )),
                 complianceStatus: "azure-compliant-uvm"
-            ),
-
-            new TrustAnchor(
-                friendlyName: "ACI Prss Jan 2023 Leaf Cert Trust Anchor",
-                signer: new TrustedKeySigner(new TrustedSigningKey(
-                    UvmEndorsementSigningKeyPrssJan2023
-                )),
-                complianceStatus: "azure-compliant-uvm"
-            ),
-
-            new TrustAnchor(
-                friendlyName: "AKS Root CA Trust Anchor",
-                signer: new TrustedCertChainSigner(new TrustedSigningCertChain(
-                    UvmEndorsementSigningKeyPrssCA,
-                    "1.3.6.1.4.1.311.76.59.1.5"
-                )),
-                issuer: "did:x509:0:sha256:I__iuL25oXEVFdTP_aBLx_eT1RPHbCQ_ECBQfYZpt9s::eku:1.3.6.1.4.1.311.76.59.1.5",
-                feed: "ConfAKS-AMD-UVM",
-                complianceStatus: "azure-signed-katacc-uvm"
             ),
         };
     }
