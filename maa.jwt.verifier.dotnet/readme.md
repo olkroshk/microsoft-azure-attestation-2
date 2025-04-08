@@ -45,14 +45,19 @@ See [code](Program.cs#L265).
 
 ### Verify PRSS endorsement for UVM image roots to Key-PRSS-ACI
 
-The COSE endorsement includes a certificate chain in its protected header. The verifier must:
+The UVM endorsement is embedded as a COSE_Sign1 structure within an X.509 certificate extension. Verification steps:
 
-- Parse the COSE Sign1 structure
-- Validate the embedded signature
-- Validate the certificate chain
-- Confirm that the chain roots to a known trusted PRSS key
+- Parse the COSE_Sign1 structure and extract the protected headers and payload.
+- Verify the signature of the COSE_Sign1 object.
+- Extract the certificate chain (`x5chain`) from the protected headers.
+- Ensure the certificate chain is rooted in a trusted PRSS root key.
+- If the trusted PRSS anchor requires Enhanced Key Usage (EKU), verify that the signing certificate includes the required EKU and that it matches the expected value.
 
-See [code](Program.cs#L308).
+This step ensures the UVM image is endorsed by a trusted Confidential ACI root.
+
+For more information on the PRSS validation, see [C-ACI documentation](https://github.com/microsoft/confidential-aci-examples/blob/main/docs/Confidential_ACI_SCHEME.md).
+
+See [code](Program.cs#L308) for an implementation example.
 
 ### Verify SEVSNP.hostdata matches hash of Rego policy containing Key-PRSS-MAA
 
