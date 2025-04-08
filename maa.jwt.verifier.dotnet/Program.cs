@@ -20,7 +20,9 @@ namespace maa.jwt.verifier.sevsnp
             try
             {
                 string filePath = PathUtilities.GetInputFilePathOrDefault(args, "sev-snp-jwt.txt");
-                string jwtToken = await File.ReadAllTextAsync(filePath);
+                string expectedDnsName = args.Length >= 2
+                    ? args[1]
+                    : "https://sharedweu.weu.test.attest.azure.net";
 
                 bool validateLifetime = !PathUtilities.IsUsingDefaultValues;
                 if (PathUtilities.IsUsingDefaultValues)
@@ -28,7 +30,9 @@ namespace maa.jwt.verifier.sevsnp
                     Console.WriteLine("WARNING: The tool is using the default JWT token file. Token expiration validation will be disabled.");
                 }
 
-                if (await ValidateJwtAsync(jwtToken, validateLifetime))
+                string jwtToken = await File.ReadAllTextAsync(filePath);
+
+                if (await ValidateJwtAsync(jwtToken, expectedDnsName, validateLifetime))
                 {
                     Console.WriteLine("SUCCESS: JWT token passed all validation checks.");
                 }
@@ -43,7 +47,7 @@ namespace maa.jwt.verifier.sevsnp
             }
         }
 
-        private static async Task<bool> ValidateJwtAsync(string token, bool validateLifetime)
+        private static async Task<bool> ValidateJwtAsync(string token, string expectedDnsName, bool validateLifetime)
         {
             bool result = true;
             try
@@ -55,6 +59,7 @@ namespace maa.jwt.verifier.sevsnp
                 var selfSignedCerts = Utils.RetrieveSelfSignedSigningCertificates(certificatesString);
 
                 result &= await ValidateTokenAsync(jwt, certificatesString, validateLifetime);
+                result &= ValidateIssuerClaim(jwt, expectedDnsName);
 
                 var selfSignedCert = selfSignedCerts[0];
                 var quoteValueJson = Utils.GetExtensionValueAsJson(selfSignedCert, Constants.MAA_EVIDENCE_CERTIFICATE_EXTENSION_OID);
@@ -73,7 +78,7 @@ namespace maa.jwt.verifier.sevsnp
             }
             catch (Exception ex)
             {
-                Console.WriteLine("ERROR: JWT Validation Error, exception: " + ex.Message);
+                Console.WriteLine("ERROR: JWT Validation Error, exception: " + ex);
                 return false;
             }
             return result;
@@ -97,7 +102,7 @@ namespace maa.jwt.verifier.sevsnp
         /// <returns>
         /// <c>true</c> if the token's signature is valid and (if enabled) the token is not expired; otherwise, <c>false</c>.
         /// </returns>
-        public static async Task<bool> ValidateTokenAsync(JwtSecurityToken jwt, string certificatesString, bool ValidateLifetime)
+        public static async Task<bool> ValidateTokenAsync(JwtSecurityToken jwt, string certificatesString, bool validateLifetime)
         {
             try
             {
@@ -108,7 +113,7 @@ namespace maa.jwt.verifier.sevsnp
                     IssuerSigningKeys = issuerPublicKeySet.GetSigningKeys(),
                     ValidateAudience = false,
                     ValidateIssuer = false,
-                    ValidateLifetime = ValidateLifetime
+                    ValidateLifetime = validateLifetime
                 };
 
                 var handler = new JwtSecurityTokenHandler();
@@ -116,17 +121,49 @@ namespace maa.jwt.verifier.sevsnp
 
                 if (validationResult.IsValid)
                 {
-                    Console.WriteLine("SUCCESS: Validated the signature and expiration of a JWT using the issuer's signing keys retrieved from its JWK endpoint.");
+                    Console.WriteLine("SUCCESS: JWT signature validated.");
                     return true;
+                }
+
+                if (validationResult.Exception != null)
+                {
+                    Console.WriteLine($"Exception: {validationResult.Exception.GetType().Name} - {validationResult.Exception.Message}");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"ERROR: JWT validation failed: {ex.Message}");
+                Console.WriteLine($"EXCEPTION: Token validation threw an error: {ex}");
             }
 
-            Console.WriteLine("ERROR: Failed to validate JWT.");
+            Console.WriteLine("ERROR: JWT validation failed.");
             return false;
+        }
+
+        /// <summary>
+        /// Validates that the JWT 'iss' (issuer) claim matches the expected DNS name.
+        /// </summary>
+        /// <param name="jwt">The parsed JWT token.</param>
+        /// <param name="expectedDnsName">The expected value of the 'iss' claim.</param>
+        /// <returns>
+        /// <c>true</c> if the 'iss' claim matches the expected DNS name; otherwise, <c>false</c>.
+        /// </returns>
+        private static bool ValidateIssuerClaim(JwtSecurityToken jwt, string expectedDnsName)
+        {
+            var issuer = jwt.Issuer;
+            if (string.IsNullOrEmpty(issuer))
+            {
+                Console.WriteLine("ERROR: 'iss' claim is missing from the JWT.");
+                return false;
+            }
+
+            if (!string.Equals(issuer, expectedDnsName, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"ERROR: 'iss' claim mismatch. Expected '{expectedDnsName}', got '{issuer}'");
+                return false;
+            }
+
+            Console.WriteLine($"SUCCESS: JWT 'iss' claim matches expected value '{expectedDnsName}'");
+            return true;
         }
 
         /// <summary>
@@ -156,7 +193,7 @@ namespace maa.jwt.verifier.sevsnp
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"ERROR: Failed to read TEE Kind extension from certificate {certificate.Subject}: {ex.Message}");
+                Console.WriteLine($"ERROR: Failed to read TEE Kind extension from certificate {certificate.Subject}: {ex}");
             }
             return false;
         }
@@ -252,37 +289,6 @@ namespace maa.jwt.verifier.sevsnp
         }
 
         /// <summary>
-        /// Verifies that the hostdata value from a SEV-SNP attestation report matches the expected SHA-256 hash of the current CCE policy.
-        /// </summary>
-        /// <param name="snpReport">The parsed SEV-SNP attestation report.</param>
-        /// <returns>
-        /// <c>true</c> if the hostdata value in the SNP report matches the expected CCE policy hash; otherwise, <c>false</c>.
-        /// </returns>
-        private static bool VerifyHostDataClaim(SnpAttestationReport snpReport)
-        {
-            try
-            {
-                // Latest CCE policy as of 1.29.2025.
-                // Hash was confirmed by computing the SHA256 of the CCE policy.
-                // CCE policy was extracted from the ARM template & base64 decoded using Linux style line ending.
-                const string expectedHostDataValue = "0178240eff4ef968efdcd735b8bcee63578c4eb9e4264178f747df149bf57bff";
-                var hostDataValueSnpReport = snpReport.GetHostDataHex();
-                if (!string.IsNullOrEmpty(hostDataValueSnpReport) && expectedHostDataValue.Equals(hostDataValueSnpReport))
-                {
-                    Console.WriteLine($"SUCCESS: Hostdata value '{hostDataValueSnpReport}' from SNP report matches expected policy hash '{expectedHostDataValue}'");
-                    return true;
-                }
-                Console.WriteLine($"ERROR: Hostdata is missing or invalid. Found: {hostDataValueSnpReport ?? "<null>"}. Expected: {expectedHostDataValue}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ERROR: Exception occurred while verifying hostdata: {ex.Message}");
-            }
-
-            return false;
-        }
-
-        /// <summary>
         /// Verifies that the launch measurement in the SEV-SNP attestation report matches the value endorsed in the UVM evidence.
         /// </summary>
         /// <param name="endorsementsValue">A JSON string containing UVM endorsement data, including the encoded COSE Sign1 payload.</param>
@@ -322,118 +328,9 @@ namespace maa.jwt.verifier.sevsnp
             }
             catch (Exception ex)
             {
-                Console.WriteLine("ERROR: Failed to verify launch measurement: " + ex.Message);
+                Console.WriteLine("ERROR: Failed to verify launch measurement: " + ex);
             }
             return false;
-        }
-
-        /// <summary>
-        /// Verifies that SEVSNP.reportdata matches the SHA-256 hash of the signer's public key.
-        /// This confirms that the attestation is bound to the holder of the corresponding private key.
-        /// </summary>
-        /// <param name="cert">The certificate containing the RSA public key.</param>
-        /// <param name="snpReport">The SEV-SNP attestation report.</param>
-        /// <returns>True if the reportdata matches the expected public key hash; otherwise, false.</returns>
-        private static bool VerifyReportData(X509Certificate2 cert, SnpAttestationReport snpReport)
-        {
-            try
-            {
-                string expectedHashHex = HashPemWithNullTerminator(cert);
-                string reportDataHex = snpReport.GetReportDataHex();
-                byte[] reportDataBytes = Convert.FromHexString(reportDataHex);
-
-                if (reportDataBytes.Length != 64)
-                {
-                    Console.WriteLine("ERROR: Invalid ReportData length. Expected 64 bytes.");
-                    return false;
-                }
-
-                if (!reportDataBytes.Skip(32).All(b => b == 0x00))
-                {
-                    Console.WriteLine("ERROR: Upper 32 bytes of ReportData (bytes 32–63) must be zero.");
-                    return false;
-                }
-
-                string actualHashHex = Convert.ToHexString(reportDataBytes.Take(32).ToArray()).ToLowerInvariant();
-                if (!actualHashHex.Equals(expectedHashHex, StringComparison.OrdinalIgnoreCase))
-                {
-                    Console.WriteLine("ERROR: Lower 32 bytes of ReportData do not match the expected public key hash.");
-                    Console.WriteLine($"Expected: {expectedHashHex}");
-                    Console.WriteLine($"Actual:   {actualHashHex}");
-                    return false;
-                }
-
-                Console.WriteLine("SUCCESS: SEVSNP.reportdata matches hash of expected public key.");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ERROR: Exception while verifying ReportData: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Computes the SHA-256 hash of a PEM-encoded RSA public key with a null terminator, for use in
-        /// validating the `report_data` field of an AMD SEV-SNP attestation report.
-        ///
-        /// <para>
-        /// The `report_data` field in the SEV-SNP attestation report includes a 64-byte value, where the
-        /// lower 32 bytes (bytes 0–31) may be set to the SHA-256 hash of the public key used to verify
-        /// the payload's signature. This function generates a hash that can be compared against that
-        /// `report_data` value to ensure the attestation is bound to the specific signing key.
-        /// </para>
-        ///
-        /// <para>
-        /// The input to the hash is constructed as follows:
-        /// - The RSA public key is exported in SubjectPublicKeyInfo (SPKI) format.
-        /// - It is Base64-encoded and wrapped in standard PEM boundaries:
-        ///   <c>-----BEGIN PUBLIC KEY-----</c> and <c>-----END PUBLIC KEY-----</c>.
-        /// - The Base64 content is split into 64-character lines.
-        /// - All line endings use Unix-style LF (`\n`) — no CRLF (`\r\n`).
-        /// - The final PEM string includes a newline (`\n`) after the END line.
-        /// - A single null terminator byte (`0x00`) is appended to the PEM string.
-        /// - The resulting UTF-8 byte array is passed to SHA-256.
-        /// </para>
-        ///
-        /// <para>
-        /// Example hashed content (line endings shown as \n):
-        ///
-        /// <code>
-        /// -----BEGIN PUBLIC KEY-----\n
-        /// MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs+AfUU1TfCR/oN72KXbl\n
-        /// 4WHbnGsHvXabFlFrLcY/hbjwtexu5EzgCxeXvWYQIp6ZE4T38OHeJP28UEy1be98\n
-        /// N8la6nTSnBQc7JNQDQNHMZXHfP43kCVX6ZvLjoeU4Tx+dSymDYKtp2wtsdDeTclp\n
-        /// u3x9mbh6OkDxlJxcO6tts6EBd0foLRwX67wL25XcaoemnvATla+DO+5eOaClT5Xj\n
-        /// 4f+Wi2ZGHe8Dsb2BDZa+ww/lAwQXf085lXlmeLk1YEMkTw5oRJulXQ0aanzhl0FG\n
-        /// eIIXAlE0r3AxLcy++RHNQa9Ci7zKmnKV9+6BbX/r/AMIcxzzxOUeszAz1JpKJ8JZ\n
-        /// dwIDAQAB\n
-        /// -----END PUBLIC KEY-----\n
-        /// \0
-        /// </code>
-        /// </para>
-        ///
-        /// <returns>
-        /// A lowercase hexadecimal string representing the SHA-256 hash of the null-terminated PEM-formatted RSA key.
-        /// This hash should match the lower 32 bytes of the SEV-SNP attestation `report_data` if the key was used
-        /// as the report signer.
-        /// </returns>
-        public static string HashPemWithNullTerminator(X509Certificate2 cert)
-        {
-            RSA? rsa = cert.GetRSAPublicKey();
-            if (rsa == null)
-            {
-                throw new Exception("HashPemWithNullTerminator - rsa is null.");
-            }
-            string pem = Utils.RsaToPem(rsa);
-
-            byte[] pemBytes = Encoding.UTF8.GetBytes(pem);
-            byte[] bytesWithNull = new byte[pemBytes.Length + 1];
-            Buffer.BlockCopy(pemBytes, 0, bytesWithNull, 0, pemBytes.Length);
-            bytesWithNull[^1] = 0;
-
-            string pemHashHex = Convert.ToHexString(SHA256.HashData(bytesWithNull)).ToLowerInvariant();
-            return pemHashHex;
         }
 
         /// <summary>
@@ -518,9 +415,149 @@ namespace maa.jwt.verifier.sevsnp
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"ERROR: Failed to verify UVM endorsement signature: {ex.Message}");
+                Console.WriteLine($"ERROR: Failed to verify UVM endorsement signature: {ex}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Verifies that the hostdata value from a SEV-SNP attestation report matches the expected SHA-256 hash of the current CCE policy.
+        /// </summary>
+        /// <param name="snpReport">The parsed SEV-SNP attestation report.</param>
+        /// <returns>
+        /// <c>true</c> if the hostdata value in the SNP report matches the expected CCE policy hash; otherwise, <c>false</c>.
+        /// </returns>
+        private static bool VerifyHostDataClaim(SnpAttestationReport snpReport)
+        {
+            try
+            {
+                // Latest CCE policy as of 1.29.2025.
+                // Hash was confirmed by computing the SHA256 of the CCE policy.
+                // CCE policy was extracted from the ARM template & base64 decoded using Linux style line ending.
+                const string expectedHostDataValue = "0178240eff4ef968efdcd735b8bcee63578c4eb9e4264178f747df149bf57bff";
+                var hostDataValueSnpReport = snpReport.GetHostDataHex();
+                if (!string.IsNullOrEmpty(hostDataValueSnpReport) && expectedHostDataValue.Equals(hostDataValueSnpReport))
+                {
+                    Console.WriteLine($"SUCCESS: Hostdata value '{hostDataValueSnpReport}' from SNP report matches expected policy hash '{expectedHostDataValue}'");
+                    return true;
+                }
+                Console.WriteLine($"ERROR: Hostdata is missing or invalid. Found: {hostDataValueSnpReport ?? "<null>"}. Expected: {expectedHostDataValue}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR: Exception occurred while verifying hostdata: {ex}");
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Verifies that SEVSNP.reportdata matches the SHA-256 hash of the signer's public key.
+        /// This confirms that the attestation is bound to the holder of the corresponding private key.
+        /// </summary>
+        /// <param name="cert">The certificate containing the RSA public key.</param>
+        /// <param name="snpReport">The SEV-SNP attestation report.</param>
+        /// <returns>True if the reportdata matches the expected public key hash; otherwise, false.</returns>
+        private static bool VerifyReportData(X509Certificate2 cert, SnpAttestationReport snpReport)
+        {
+            try
+            {
+                string expectedHashHex = HashPemWithNullTerminator(cert);
+                string reportDataHex = snpReport.GetReportDataHex();
+                byte[] reportDataBytes = Convert.FromHexString(reportDataHex);
+
+                if (reportDataBytes.Length != 64)
+                {
+                    Console.WriteLine("ERROR: Invalid ReportData length. Expected 64 bytes.");
+                    return false;
+                }
+
+                if (!reportDataBytes.Skip(32).All(b => b == 0x00))
+                {
+                    Console.WriteLine("ERROR: Upper 32 bytes of ReportData (bytes 32–63) must be zero.");
+                    return false;
+                }
+
+                string actualHashHex = Convert.ToHexString(reportDataBytes.Take(32).ToArray()).ToLowerInvariant();
+                if (!actualHashHex.Equals(expectedHashHex, StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine("ERROR: Lower 32 bytes of ReportData do not match the expected public key hash.");
+                    Console.WriteLine($"Expected: {expectedHashHex}");
+                    Console.WriteLine($"Actual:   {actualHashHex}");
+                    return false;
+                }
+
+                Console.WriteLine("SUCCESS: SEVSNP.reportdata matches hash of expected public key.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR: Exception while verifying ReportData: {ex}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Computes the SHA-256 hash of a PEM-encoded RSA public key with a null terminator, for use in
+        /// validating the `report_data` field of an AMD SEV-SNP attestation report.
+        ///
+        /// <para>
+        /// The `report_data` field in the SEV-SNP attestation report includes a 64-byte value, where the
+        /// lower 32 bytes (bytes 0–31) may be set to the SHA-256 hash of the public key used to verify
+        /// the payload's signature. This function generates a hash that can be compared against that
+        /// `report_data` value to ensure the attestation is bound to the specific signing key.
+        /// </para>
+        ///
+        /// <para>
+        /// The input to the hash is constructed as follows:
+        /// - The RSA public key is exported in SubjectPublicKeyInfo (SPKI) format.
+        /// - It is Base64-encoded and wrapped in standard PEM boundaries:
+        ///   <c>-----BEGIN PUBLIC KEY-----</c> and <c>-----END PUBLIC KEY-----</c>.
+        /// - The Base64 content is split into 64-character lines.
+        /// - All line endings use Unix-style LF (`\n`) — no CRLF (`\r\n`).
+        /// - The final PEM string includes a newline (`\n`) after the END line.
+        /// - A single null terminator byte (`0x00`) is appended to the PEM string.
+        /// - The resulting UTF-8 byte array is passed to SHA-256.
+        /// </para>
+        ///
+        /// <para>
+        /// Example hashed content (line endings shown as \n):
+        ///
+        /// <code>
+        /// -----BEGIN PUBLIC KEY-----\n
+        /// MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs+AfUU1TfCR/oN72KXbl\n
+        /// 4WHbnGsHvXabFlFrLcY/hbjwtexu5EzgCxeXvWYQIp6ZE4T38OHeJP28UEy1be98\n
+        /// N8la6nTSnBQc7JNQDQNHMZXHfP43kCVX6ZvLjoeU4Tx+dSymDYKtp2wtsdDeTclp\n
+        /// u3x9mbh6OkDxlJxcO6tts6EBd0foLRwX67wL25XcaoemnvATla+DO+5eOaClT5Xj\n
+        /// 4f+Wi2ZGHe8Dsb2BDZa+ww/lAwQXf085lXlmeLk1YEMkTw5oRJulXQ0aanzhl0FG\n
+        /// eIIXAlE0r3AxLcy++RHNQa9Ci7zKmnKV9+6BbX/r/AMIcxzzxOUeszAz1JpKJ8JZ\n
+        /// dwIDAQAB\n
+        /// -----END PUBLIC KEY-----\n
+        /// \0
+        /// </code>
+        /// </para>
+        ///
+        /// <returns>
+        /// A lowercase hexadecimal string representing the SHA-256 hash of the null-terminated PEM-formatted RSA key.
+        /// This hash should match the lower 32 bytes of the SEV-SNP attestation `report_data` if the key was used
+        /// as the report signer.
+        /// </returns>
+        public static string HashPemWithNullTerminator(X509Certificate2 cert)
+        {
+            RSA? rsa = cert.GetRSAPublicKey();
+            if (rsa == null)
+            {
+                throw new Exception("HashPemWithNullTerminator - rsa is null.");
+            }
+            string pem = Utils.RsaToPem(rsa);
+
+            byte[] pemBytes = Encoding.UTF8.GetBytes(pem);
+            byte[] bytesWithNull = new byte[pemBytes.Length + 1];
+            Buffer.BlockCopy(pemBytes, 0, bytesWithNull, 0, pemBytes.Length);
+            bytesWithNull[^1] = 0;
+
+            string pemHashHex = Convert.ToHexString(SHA256.HashData(bytesWithNull)).ToLowerInvariant();
+            return pemHashHex;
         }
     }
 }

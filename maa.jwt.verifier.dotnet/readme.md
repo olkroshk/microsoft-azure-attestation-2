@@ -11,13 +11,20 @@ Attestation tokens from Azure Attestation are JWTs signed using a certificate ch
 The signing certificates are also available via the [OpenID metadata endpoint](https://learn.microsoft.com/en-us/rest/api/attestation/metadata-configuration/get?view=rest-attestation-2022-08-01&tabs=HTTP#get-openid-metadata), for example:  
 `https://<your-instance>.attest.azure.net/.well-known/openid-configuration`
 
-See [code](Program.cs#L85) for an implementation example.
+See [code](Program.cs#L105) for an implementation example.
+
+### Verify that the 'iss' claim matches the expected DNS name
+
+The `iss` (issuer) claim in the JWT must match the expected DNS name of the attestation provider (e.g., `https://sharedweu.weu.test.attest.azure.net`).  
+This ensures the token was issued by the correct instance of Azure Attestation.
+
+See [code](Program.cs#L150).
 
 ### Verify that TEE Kind is SEV-SNP
 
 Verify that the signing certificate contains data indicating that it was issued by a SEV-SNP platform. This is done by checking the TEE Kind X.509 extension in the certificate and confirming that its value corresponds to `sev-snp`. If the extension is missing or the value does not match, the platform is not considered valid.
 
-See [code](Program.cs#L127).
+See [code](Program.cs#L179).
 
 ### Verify SEVSNP report roots to AMD
 
@@ -29,13 +36,13 @@ The attestation certificate includes the SEV-SNP report and a VCEK certificate c
 - Extract the public ECDSA P-384 key from the leaf certificate
 - Verify the signature on the SEV-SNP report using this key
 
-See [code](Program.cs#L169).
+See [code](Program.cs#L221).
 
 ### Verify SEVSNP.launchmeasurement equals COSE.launchmeasurement
 
 The COSE UVM endorsement includes a `launchMeasurement` claim. This must match the `measurement` value in the SEV-SNP report. The values are compared byte-for-byte.
 
-See [code](Program.cs#L278).
+See [code](Program.cs#L299).
 
 ### Verify PRSS endorsement for UVM image roots to Key-PRSS-ACI
 
@@ -46,19 +53,19 @@ The COSE endorsement includes a certificate chain in its protected header. The v
 - Validate the certificate chain
 - Confirm that the chain roots to a known trusted PRSS key
 
-See [code](Program.cs#L431).
+See [code](Program.cs#L343).
 
 ### Verify SEVSNP.hostdata matches hash of Rego policy containing Key-PRSS-MAA
 
 The `host_data` field in the SEV-SNP report must be set to the SHA-256 hash of the current policy. This is computed outside the token and compared to the report.
 
-See [code](Program.cs#L246).
+See [code](Program.cs#L430).
 
 ### Verify SEVSNP.reportdata matches hash of MAA runtime claims
 
 The lower 32 bytes of the `report_data` field in the SEV-SNP report must equal the SHA-256 hash of the PEM-formatted public key used to sign the JWT. The upper 32 bytes must be all zero. This step proves the attestation is cryptographically bound to the signer.
 
-See [code](Program.cs#L322).
+See [code](Program.cs#L461).
 
 ## How to Run
 
@@ -70,12 +77,26 @@ See [code](Program.cs#L322).
 
 ### Clone and Run
 
-```sh
+```bash
 git clone --recursive https://github.com/Azure-Samples/microsoft-azure-attestation.git
 cd microsoft-azure-attestation/maa.jwt.verifier.dotnet
 dotnet restore
 dotnet build
 dotnet run
+```
+
+This will run the tool using the default JWT token file (`sev-snp-jwt.txt`) and the default DNS name (`https://sharedweu.weu.test.attest.azure.net`).
+
+### To use your own token and expected issuer DNS:
+
+```bash
+dotnet run -- <jwt_file> <expected_dns>
+```
+
+Example:
+
+```bash
+dotnet run -- sev-snp-jwt.txt  https://sharedweu.weu.test.attest.azure.net
 ```
 
 ### Optional: Run in Visual Studio Code
