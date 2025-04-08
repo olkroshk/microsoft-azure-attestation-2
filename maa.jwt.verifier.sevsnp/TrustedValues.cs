@@ -8,24 +8,6 @@ namespace maa.jwt.verifier.sevsnp
     public static class TrustedValues
     {
         // -----------------------------------------------------------------------------------
-        // Trusted MAA public root key
-        // -----------------------------------------------------------------------------------
-
-        /// <summary>
-        /// Microsoft Azure Attestation (MAA) root public key used to validate SEV-SNP report signatures.
-        /// Contact the MAA team for updates or rotated keys.
-        /// </summary>
-        public const string MaaRootKey = @"-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs+AfUU1TfCR/oN72KXbl
-4WHbnGsHvXabFlFrLcY/hbjwtexu5EzgCxeXvWYQIp6ZE4T38OHeJP28UEy1be98
-N8la6nTSnBQc7JNQDQNHMZXHfP43kCVX6ZvLjoeU4Tx+dSymDYKtp2wtsdDeTclp
-u3x9mbh6OkDxlJxcO6tts6EBd0foLRwX67wL25XcaoemnvATla+DO+5eOaClT5Xj
-4f+Wi2ZGHe8Dsb2BDZa+ww/lAwQXf085lXlmeLk1YEMkTw5oRJulXQ0aanzhl0FG
-eIIXAlE0r3AxLcy++RHNQa9Ci7zKmnKV9+6BbX/r/AMIcxzzxOUeszAz1JpKJ8JZ
-dwIDAQAB
------END PUBLIC KEY-----";
-
-        // -----------------------------------------------------------------------------------
         // Trusted AMD root keys
         // -----------------------------------------------------------------------------------
 

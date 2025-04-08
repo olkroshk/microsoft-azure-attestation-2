@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using Microsoft.IdentityModel.Tokens;
-using System.Formats.Asn1;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Cose;
@@ -20,7 +19,7 @@ namespace maa.jwt.verifier.sevsnp
         {
             try
             {
-                string filePath = PathUtilities.GetInputFilePathOrDefault(args, "jwt.txt");
+                string filePath = PathUtilities.GetInputFilePathOrDefault(args, "sev-snp-jwt.txt");
                 string jwtToken = await File.ReadAllTextAsync(filePath);
 
                 if (await ValidateJwtAsync(jwtToken))
@@ -47,12 +46,10 @@ namespace maa.jwt.verifier.sevsnp
                 var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token)
                                ?? throw new Exception("JWT token is null.");
 
-
                 string certificatesString = await Utils.GetSigningCertificatesAsync(jwt);
                 var selfSignedCerts = Utils.RetrieveSelfSignedSigningCertificates(certificatesString);
 
                 result &= await ValidateTokenAsync(jwt, certificatesString);
-                result &= VerifyCertificateSignature(selfSignedCerts[0], TrustedValues.MaaRootKey);
 
                 var selfSignedCert = selfSignedCerts[0];
                 var quoteValueJson = Utils.GetExtensionValueAsJson(selfSignedCert, Constants.MAA_EVIDENCE_CERTIFICATE_EXTENSION_OID);
@@ -75,80 +72,6 @@ namespace maa.jwt.verifier.sevsnp
                 return false;
             }
             return result;
-        }
-
-        /// <summary>
-        /// Verifies whether a given X.509 certificate was signed by a specified trusted RSA public key.
-        ///
-        /// <para>
-        /// This method performs low-level certificate signature verification by parsing the certificate structure
-        /// according to <b>RFC 5280</b>. It extracts the <c>tbsCertificate</c> (To-Be-Signed portion) from the DER-encoded
-        /// certificate, identifies the hash algorithm from the signature algorithm OID, and then uses the provided
-        /// trusted RSA key to verify the signature over the <c>tbsCertificate</c>.
-        /// </para>
-        ///
-        /// <para>
-        /// Certificate structure (per RFC 5280):
-        /// <code>
-        /// Certificate ::= SEQUENCE {
-        ///     tbsCertificate       TBSCertificate,
-        ///     signatureAlgorithm   AlgorithmIdentifier,
-        ///     signatureValue       BIT STRING
-        /// }
-        /// </code>
-        /// </para>
-        ///
-        /// </summary>
-        /// <param name="certificate">
-        /// The <see cref="X509Certificate2"/> object to be verified. It must be DER-encoded and contain a valid signature.
-        /// </param>
-        /// <param name="trustedKeyPem">
-        /// A PEM-encoded RSA public key that is expected to have signed the given certificate (i.e., the issuer’s public key).
-        /// </param>
-        /// <returns>
-        /// <c>true</c> if the signature on the certificate is valid using the given public key; otherwise, <c>false</c>.
-        /// </returns>
-        /// <remarks>
-        /// Supported signature algorithms (by OID):
-        /// <list type="bullet">
-        /// <item><term>1.2.840.113549.1.1.5</term><description>sha1WithRSAEncryption</description></item>
-        /// <item><term>1.2.840.113549.1.1.11</term><description>sha256WithRSAEncryption</description></item>
-        /// <item><term>1.2.840.113549.1.1.12</term><description>sha384WithRSAEncryption</description></item>
-        /// <item><term>1.2.840.113549.1.1.13</term><description>sha512WithRSAEncryption</description></item>
-        /// </list>
-        /// </remarks>
-        public static bool VerifyCertificateSignature(X509Certificate2 certificate, string trustedKeyPem)
-        {
-            try
-            {
-                using RSA trustedRsa = RSA.Create();
-                trustedRsa.ImportFromPem(trustedKeyPem);
-
-                ReadOnlyMemory<byte> rawData = certificate.RawData;
-                var reader = new AsnReader(rawData, AsnEncodingRules.DER);
-
-                var certSequence = reader.ReadSequence();
-                var tbsCertificateEncoded = certSequence.PeekEncodedValue().ToArray();
-                certSequence.ReadEncodedValue();
-                certSequence.ReadSequence();
-                byte[] signature = certSequence.ReadBitString(out _);
-
-                var hashAlg = certificate.SignatureAlgorithm.Value switch
-                {
-                    "1.2.840.113549.1.1.5" => HashAlgorithmName.SHA1,
-                    "1.2.840.113549.1.1.11" => HashAlgorithmName.SHA256,
-                    "1.2.840.113549.1.1.12" => HashAlgorithmName.SHA384,
-                    "1.2.840.113549.1.1.13" => HashAlgorithmName.SHA512,
-                    _ => throw new NotSupportedException($"Unsupported signature algorithm OID: {certificate.SignatureAlgorithm.Value}")
-                };
-
-                return trustedRsa.VerifyData(tbsCertificateEncoded, signature, hashAlg, RSASignaturePadding.Pkcs1);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ERROR: Signature verification failed: {ex.Message}");
-                return false;
-            }
         }
 
         /// <summary>
