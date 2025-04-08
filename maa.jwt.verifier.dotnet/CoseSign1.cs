@@ -61,20 +61,17 @@ namespace maa.jwt.verifier.sevsnp
         {
             public string FriendlyName { get; }
             public TrustedSigner Signer { get; }
-            public string ComplianceStatus { get; }
             public string? Issuer { get; }
             public string? Feed { get; }
 
             public TrustAnchor(
                 string friendlyName,
                 TrustedSigner signer,
-                string complianceStatus,
                 string? issuer = null,
                 string? feed = null)
             {
                 FriendlyName = friendlyName;
                 Signer = signer;
-                ComplianceStatus = complianceStatus;
                 Issuer = issuer;
                 Feed = feed;
             }

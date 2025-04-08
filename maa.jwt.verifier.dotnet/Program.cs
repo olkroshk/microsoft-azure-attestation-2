@@ -14,7 +14,6 @@ namespace maa.jwt.verifier.sevsnp
 {
     public class Program
     {
-
         public static async Task Main(string[] args)
         {
             try
@@ -35,19 +34,19 @@ namespace maa.jwt.verifier.sevsnp
                 if (await ValidateJwtAsync(jwtToken, expectedDnsName, validateLifetime))
                 {
                     Console.WriteLine("SUCCESS: JWT token passed all validation checks.");
-                }
-                else
-                {
-                    Console.WriteLine("FAILURE: JWT token failed one or more validation checks.");
+                    return;
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"EXCEPTION: {ex}");
             }
+
+            Console.WriteLine("FAILURE: JWT token failed one or more validation checks.");
+            return;
         }
 
-        private static async Task<bool> ValidateJwtAsync(string token, string expectedDnsName, bool validateLifetime)
+        public static async Task<bool> ValidateJwtAsync(string token, string expectedDnsName, bool validateLifetime)
         {
             bool result = true;
             try
@@ -58,8 +57,7 @@ namespace maa.jwt.verifier.sevsnp
                 string certificatesString = await Utils.GetSigningCertificatesAsync(jwt);
                 var selfSignedCerts = Utils.RetrieveSelfSignedSigningCertificates(certificatesString);
 
-                result &= await ValidateTokenAsync(jwt, certificatesString, validateLifetime);
-                result &= ValidateIssuerClaim(jwt, expectedDnsName);
+                result &= await ValidateTokenAsync(jwt, certificatesString, expectedDnsName, validateLifetime);
 
                 var selfSignedCert = selfSignedCerts[0];
                 var quoteValueJson = Utils.GetExtensionValueAsJson(selfSignedCert, Constants.MAA_EVIDENCE_CERTIFICATE_EXTENSION_OID);
@@ -85,24 +83,15 @@ namespace maa.jwt.verifier.sevsnp
         }
 
         /// <summary>
-        /// Validates the signature and (optionally) the expiration of a JWT using the issuer's signing keys
-        /// retrieved from its JSON Web Key Set (JWK) endpoint.
+        /// Validates the signature, issuer, and (optionally) the expiration of a JWT
+        /// using the issuer's signing keys retrieved from its JWK endpoint.
         /// </summary>
-        /// <param name="jwt">
-        /// The <see cref="JwtSecurityToken"/> object representing the parsed JWT token to be validated.
-        /// </param>
-        /// <param name="certificatesString">
-        /// A string containing the JWK set (typically in JSON format) retrieved from the issuer's `jku` endpoint.
-        /// This includes one or more signing keys used to validate the token signature.
-        /// </param>
-        /// <param name="ValidateLifetime">
-        /// Specifies whether to enforce the token's expiration and lifetime constraints.
-        /// Set to <c>false</c> to skip expiration checks (e.g., during debugging or testing).
-        /// </param>
-        /// <returns>
-        /// <c>true</c> if the token's signature is valid and (if enabled) the token is not expired; otherwise, <c>false</c>.
-        /// </returns>
-        public static async Task<bool> ValidateTokenAsync(JwtSecurityToken jwt, string certificatesString, bool validateLifetime)
+        /// <param name="jwt">Parsed JWT token.</param>
+        /// <param name="certificatesString">JWK set retrieved from the issuer's `jku` URL.</param>
+        /// <param name="expectedIssuer">Expected `iss` claim value (e.g., MAA instance URL).</param>
+        /// <param name="validateLifetime">Whether to validate token expiration.</param>
+        /// <returns>True if the token is valid; otherwise, false.</returns>
+        private static async Task<bool> ValidateTokenAsync(JwtSecurityToken jwt, string certificatesString, string expectedIssuer, bool validateLifetime)
         {
             try
             {
@@ -111,8 +100,13 @@ namespace maa.jwt.verifier.sevsnp
                 {
                     ValidateIssuerSigningKey = true,
                     IssuerSigningKeys = issuerPublicKeySet.GetSigningKeys(),
+
+                    // This sample does not validate audience because it is not acting as a specific relying party.
                     ValidateAudience = false,
-                    ValidateIssuer = false,
+
+                    ValidateIssuer = true,
+                    ValidIssuer = expectedIssuer,
+
                     ValidateLifetime = validateLifetime
                 };
 
@@ -121,7 +115,7 @@ namespace maa.jwt.verifier.sevsnp
 
                 if (validationResult.IsValid)
                 {
-                    Console.WriteLine("SUCCESS: JWT signature validated.");
+                    Console.WriteLine($"SUCCESS: Token signature and issuer{(validateLifetime ? ", and expiration" : "")} are valid.");
                     return true;
                 }
 
@@ -132,38 +126,10 @@ namespace maa.jwt.verifier.sevsnp
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"EXCEPTION: Token validation threw an error: {ex}");
+                Console.WriteLine($"Token validation error: {ex}");
             }
-
             Console.WriteLine("ERROR: JWT validation failed.");
             return false;
-        }
-
-        /// <summary>
-        /// Validates that the JWT 'iss' (issuer) claim matches the expected DNS name.
-        /// </summary>
-        /// <param name="jwt">The parsed JWT token.</param>
-        /// <param name="expectedDnsName">The expected value of the 'iss' claim.</param>
-        /// <returns>
-        /// <c>true</c> if the 'iss' claim matches the expected DNS name; otherwise, <c>false</c>.
-        /// </returns>
-        private static bool ValidateIssuerClaim(JwtSecurityToken jwt, string expectedDnsName)
-        {
-            var issuer = jwt.Issuer;
-            if (string.IsNullOrEmpty(issuer))
-            {
-                Console.WriteLine("ERROR: 'iss' claim is missing from the JWT.");
-                return false;
-            }
-
-            if (!string.Equals(issuer, expectedDnsName, StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine($"ERROR: 'iss' claim mismatch. Expected '{expectedDnsName}', got '{issuer}'");
-                return false;
-            }
-
-            Console.WriteLine($"SUCCESS: JWT 'iss' claim matches expected value '{expectedDnsName}'");
-            return true;
         }
 
         /// <summary>
@@ -222,7 +188,7 @@ namespace maa.jwt.verifier.sevsnp
         {
             try
             {
-                // Parse PEM chain
+                // Parse PEM chain.
                 var certMatches = Regex.Matches(vcekChainPemString, "-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", RegexOptions.Singleline);
                 if (certMatches.Count == 0)
                 {
@@ -242,7 +208,7 @@ namespace maa.jwt.verifier.sevsnp
                     return false;
                 }
 
-                // Match against AMD root keys
+                // Step 1: Match against AMD root keys.
                 bool matchedRoot = TrustedValues.AmdRootKeys.Any(pem =>
                 {
                     using var trustedRsa = Utils.PemStringToRsa(pem);
@@ -256,14 +222,14 @@ namespace maa.jwt.verifier.sevsnp
                     return false;
                 }
 
-                // Validate chain
+                // Step 2: Validate chain.
                 if (!Utils.BuildAndValidateCertChain(certificates, TrustedValues.AmdRootKeys.Select(Utils.PemStringToRsa).ToArray(), Utils.CertValidationTarget.Root))
                 {
                     Console.WriteLine("ERROR: Failed to build or validate VCEK certificate chain.");
                     return false;
                 }
 
-                // Verify SEV-SNP signature
+                // Step 3: Verify SEV-SNP signature.
                 var ecdsa = leafCert.GetECDsaPublicKey();
                 if (ecdsa == null)
                 {
@@ -321,7 +287,6 @@ namespace maa.jwt.verifier.sevsnp
                     {
                         Console.WriteLine($"\tSEVSNP report launch measurement value :\t\t{presentedLaunchMeasurement}");
                         Console.WriteLine($"\tUvm endorsement '{Constants.SevSnpClaimNameLaunchMeasurement}' :\t{endorsedLaunchMeasurement}");
-
                         Console.WriteLine($"ERROR: Uvm endorsement '{Constants.SevSnpClaimNameLaunchMeasurement}' value does not match SEVSNP report value Launch measurement.");
                     }
                 }
@@ -355,14 +320,14 @@ namespace maa.jwt.verifier.sevsnp
                 var publicKey = signingCert.GetRSAPublicKey()
                     ?? throw new Exception("No valid RSA public key found in signing certificate.");
 
-                // Step 1: Verify COSE signature
+                // Step 1: Verify COSE signature.
                 if (!sign1Message.VerifyEmbedded(publicKey))
                 {
                     Console.WriteLine("ERROR: COSE message signature is invalid.");
                     return false;
                 }
 
-                // Step 2: Find a matching trust anchor (based on root public key)
+                // Step 2: Find a matching trust anchor (based on root public key).
                 var trustAnchor = TrustedValues.UvmEndorsementTrustAnchors.FirstOrDefault(anchor =>
                 {
                     switch (anchor.Signer)
@@ -399,7 +364,7 @@ namespace maa.jwt.verifier.sevsnp
                     return false;
                 }
 
-                // Step 4: If EKU is required by trust anchor, check that leaf cert has it
+                // Step 4: If EKU is required by trust anchor, check that leaf cert has it.
                 if (trustAnchor.Signer is CoseSign1.TrustedCertChainSigner certChain &&
                     !string.IsNullOrEmpty(certChain.CertChain.LeafCertRequiredEku))
                 {
@@ -542,7 +507,7 @@ namespace maa.jwt.verifier.sevsnp
         /// This hash should match the lower 32 bytes of the SEV-SNP attestation `report_data` if the key was used
         /// as the report signer.
         /// </returns>
-        public static string HashPemWithNullTerminator(X509Certificate2 cert)
+        private static string HashPemWithNullTerminator(X509Certificate2 cert)
         {
             RSA? rsa = cert.GetRSAPublicKey();
             if (rsa == null)

@@ -37,51 +37,50 @@ namespace maa.jwt.verifier.sevsnp
 
         public static List<X509Certificate2> RetrieveSelfSignedSigningCertificates(string certificatesString)
         {
-            try
+            using var doc = JsonDocument.Parse(certificatesString);
+            var root = doc.RootElement;
+
+            List<X509Certificate2> certificates = [];
+
+            if (root.TryGetProperty("keys", out JsonElement keys) && keys.ValueKind == JsonValueKind.Array)
             {
-                using var doc = JsonDocument.Parse(certificatesString);
-                var root = doc.RootElement;
-
-                List<X509Certificate2> certificates = [];
-
-                if (root.TryGetProperty("keys", out JsonElement keys) && keys.ValueKind == JsonValueKind.Array)
+                foreach (var certEntry in keys.EnumerateArray())
                 {
-                    foreach (var certEntry in keys.EnumerateArray())
+                    if (certEntry.TryGetProperty("x5c", out JsonElement x5cArray) &&
+                        x5cArray.ValueKind == JsonValueKind.Array &&
+                        x5cArray.GetArrayLength() > 0)
                     {
-                        if (certEntry.TryGetProperty("x5c", out JsonElement x5cArray) &&
-                            x5cArray.ValueKind == JsonValueKind.Array &&
-                            x5cArray.GetArrayLength() > 0)
+                        string certBase64 = x5cArray[0].GetString() ?? throw new Exception("Failed to get certificate string");
+
+                        if (!string.IsNullOrEmpty(certBase64))
                         {
-                            string certBase64 = x5cArray[0].GetString() ?? throw new Exception("Failed to get certificate string");
+                            var certBytes = Convert.FromBase64String(certBase64);
+                            var x509Certificate = new X509Certificate2(certBytes);
 
-                            if (!string.IsNullOrEmpty(certBase64))
+                            // Add only self-signed certificates
+                            if (x509Certificate.Subject == x509Certificate.Issuer)
                             {
-                                var certBytes = Convert.FromBase64String(certBase64);
-                                var x509Certificate = new X509Certificate2(certBytes);
+                                certificates.Add(x509Certificate);
 
-                                // Add only self-signed certificates
-                                if (x509Certificate.Subject == x509Certificate.Issuer)
+                                // Optional logging or debug info:
+                                if (certEntry.TryGetProperty("kid", out var kidProp))
                                 {
-                                    certificates.Add(x509Certificate);
-
-                                    // Optional logging or debug info:
-                                    if (certEntry.TryGetProperty("kid", out var kidProp))
-                                    {
-                                        Console.WriteLine($"\tKey ID for self signed signing certificate: {kidProp.GetString()}");
-                                    }
+                                    Console.WriteLine($"\tKey ID for self signed signing certificate: {kidProp.GetString()}");
                                 }
                             }
                         }
                     }
                 }
+            }
 
-                return certificates;
-            }
-            catch (Exception ex)
+            if (certificates.Count < 1)
             {
-                throw new Exception($"Certificate retrieval error: {ex.Message}", ex);
+                throw new Exception($"Failed to find any senf signed certificates in {certificatesString}");
             }
+
+            return certificates;
         }
+
         public static string GetPemFromX509Certificate2(X509Certificate2 cert)
         {
             string pem = RsaToPem(cert.GetRSAPublicKey());

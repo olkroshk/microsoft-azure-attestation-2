@@ -94,8 +94,7 @@ Eg3lefYqWc/Wq+eB5qCxiC0IjAuxz9dsNq+e+QNn2UFzqatFuHFgWBjUFixlutEF
                 signer: new TrustedCertChainSigner(new TrustedSigningCertChain(
                     UvmEndorsementSigningKeyPrssCA,
                     "1.3.6.1.4.1.311.76.59.1.2"  // EKU required in leaf cert
-                )),
-                complianceStatus: "azure-compliant-uvm"
+                ))
             ),
         };
     }
