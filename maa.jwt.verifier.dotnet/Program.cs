@@ -22,23 +22,28 @@ namespace maa.jwt.verifier.sevsnp
                 string filePath = PathUtilities.GetInputFilePathOrDefault(args, "sev-snp-jwt.txt");
                 string jwtToken = await File.ReadAllTextAsync(filePath);
 
-                if (await ValidateJwtAsync(jwtToken))
+                bool validateLifetime = !PathUtilities.IsUsingDefaultValues;
+                if (PathUtilities.IsUsingDefaultValues)
                 {
-                    Console.WriteLine("✅ SUCCESS: JWT token passed all validation checks.");
+                    Console.WriteLine("WARNING: The tool is using the default JWT token file. Token expiration validation will be disabled.");
+                }
+
+                if (await ValidateJwtAsync(jwtToken, validateLifetime))
+                {
+                    Console.WriteLine("SUCCESS: JWT token passed all validation checks.");
                 }
                 else
                 {
-                    Console.WriteLine("❌ FAILURE: JWT token failed one or more validation checks.");
+                    Console.WriteLine("FAILURE: JWT token failed one or more validation checks.");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"🚨 EXCEPTION: {ex.Message}");
-                Console.WriteLine(ex.StackTrace);
+                Console.WriteLine($"EXCEPTION: {ex}");
             }
         }
 
-        private static async Task<bool> ValidateJwtAsync(string token)
+        private static async Task<bool> ValidateJwtAsync(string token, bool validateLifetime)
         {
             bool result = true;
             try
@@ -49,7 +54,7 @@ namespace maa.jwt.verifier.sevsnp
                 string certificatesString = await Utils.GetSigningCertificatesAsync(jwt);
                 var selfSignedCerts = Utils.RetrieveSelfSignedSigningCertificates(certificatesString);
 
-                result &= await ValidateTokenAsync(jwt, certificatesString);
+                result &= await ValidateTokenAsync(jwt, certificatesString, validateLifetime);
 
                 var selfSignedCert = selfSignedCerts[0];
                 var quoteValueJson = Utils.GetExtensionValueAsJson(selfSignedCert, Constants.MAA_EVIDENCE_CERTIFICATE_EXTENSION_OID);
@@ -75,13 +80,24 @@ namespace maa.jwt.verifier.sevsnp
         }
 
         /// <summary>
-        /// Validates the signature and expiration of a JWT using the issuer's signing keys retrieved from its JWK endpoint.
+        /// Validates the signature and (optionally) the expiration of a JWT using the issuer's signing keys
+        /// retrieved from its JSON Web Key Set (JWK) endpoint.
         /// </summary>
-        /// <param name="jwt">The JWT token to validate.</param>
+        /// <param name="jwt">
+        /// The <see cref="JwtSecurityToken"/> object representing the parsed JWT token to be validated.
+        /// </param>
+        /// <param name="certificatesString">
+        /// A string containing the JWK set (typically in JSON format) retrieved from the issuer's `jku` endpoint.
+        /// This includes one or more signing keys used to validate the token signature.
+        /// </param>
+        /// <param name="ValidateLifetime">
+        /// Specifies whether to enforce the token's expiration and lifetime constraints.
+        /// Set to <c>false</c> to skip expiration checks (e.g., during debugging or testing).
+        /// </param>
         /// <returns>
-        /// <c>true</c> if the token is valid and its signature is verified; otherwise, <c>false</c>.
+        /// <c>true</c> if the token's signature is valid and (if enabled) the token is not expired; otherwise, <c>false</c>.
         /// </returns>
-        public static async Task<bool> ValidateTokenAsync(JwtSecurityToken jwt, string certificatesString)
+        public static async Task<bool> ValidateTokenAsync(JwtSecurityToken jwt, string certificatesString, bool ValidateLifetime)
         {
             try
             {
@@ -92,7 +108,7 @@ namespace maa.jwt.verifier.sevsnp
                     IssuerSigningKeys = issuerPublicKeySet.GetSigningKeys(),
                     ValidateAudience = false,
                     ValidateIssuer = false,
-                    ValidateLifetime = true // Set to 'false' to skip expiration validation if the token is expired.
+                    ValidateLifetime = ValidateLifetime
                 };
 
                 var handler = new JwtSecurityTokenHandler();

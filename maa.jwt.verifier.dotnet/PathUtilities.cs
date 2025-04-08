@@ -5,6 +5,8 @@ namespace maa.jwt.verifier.sevsnp
 {
     public static class PathUtilities
     {
+        public static bool IsUsingDefaultValues = false;
+
         public static string GetInputFilePathOrDefault(string[] args, string defaultFileName)
         {
             string filePath;
@@ -20,6 +22,7 @@ namespace maa.jwt.verifier.sevsnp
                 string? projectRoot = Directory.GetParent(AppContext.BaseDirectory)?.Parent?.Parent?.Parent?.FullName
                     ?? throw new DirectoryNotFoundException("Unable to determine project root.");
                 filePath = Path.Combine(projectRoot, defaultFileName);
+                IsUsingDefaultValues = true;
             }
 
             Console.WriteLine("\tResolved File Path: " + Path.GetFullPath(filePath));

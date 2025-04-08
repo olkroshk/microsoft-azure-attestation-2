@@ -2,7 +2,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.5.2.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "maa.jwt.verifier.sevsnp", "maa.jwt.verifier.sevsnp.csproj", "{15DD8965-3560-B922-FAE2-C405B70D42D9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "maa.jwt.verifier.dotnet", "maa.jwt.verifier.dotnet.csproj", "{15DD8965-3560-B922-FAE2-C405B70D42D9}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

@@ -72,7 +72,7 @@ See [code](Program.cs#L322).
 
 ```sh
 git clone --recursive https://github.com/Azure-Samples/microsoft-azure-attestation.git
-cd microsoft-azure-attestation/cmaa.sevsnp.attest.sample
+cd microsoft-azure-attestation/maa.jwt.verifier.dotnet
 dotnet restore
 dotnet build
 dotnet run
