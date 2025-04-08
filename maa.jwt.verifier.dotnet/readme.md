@@ -1,6 +1,6 @@
-# SEV-SNP Attestation Sample with Azure Attestation
+# Microsoft Azure Attestation (MAA) JWT Verification Sample
 
-This is a minimal .NET console application that interacts with the Microsoft Azure Attestation (MAA) service for SEV-SNP attestation type.
+This is a minimal .NET console application demonstrates how to validate a JWT issued by Microsoft Azure Attestation (MAA).
 
 ## How to Verify MAA JWT when MAA is hosted in confidential ACI containers
 
