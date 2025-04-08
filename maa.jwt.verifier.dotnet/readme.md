@@ -21,7 +21,9 @@ See [code](Program.cs#L94) for an implementation example.
 
 Verify that the signing certificate contains data indicating that it was issued by a SEV-SNP platform. This is done by checking the TEE Kind X.509 extension in the certificate and confirming that its value corresponds to `sev-snp`. If the extension is missing or the value does not match, the platform is not considered valid.
 
-See [code](Program.cs#L145).
+> Note: If the attestation instance is running on a **general-purpose SKU** or an **SGX-based platform**, the TEE Kind value will differ or may be absent. The sample is currently designed for MAA hosted on a SEV-SNP platform.
+
+See [code](Program.cs#L145) for an implementation example.
 
 ### Verify SEVSNP report roots to AMD
 
