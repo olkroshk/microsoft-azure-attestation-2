@@ -204,3 +204,15 @@ Here is an example of the output of ```./runall.sh``` for the first JSON file. T
 [17:13:48.468] :
 ...
 ```
+
+## Troubleshooting
+
+### The quote doesn't contain the PCK certificate chain
+`genquote_sgx_host` stops with `Error: the quote has certification data type 0x3, not the PCK certificate chain (0x5) that Azure Attestation needs`, or the MAA service rejects the quote with `InvalidQuote` and `OE_MISSING_CERTIFICATE_CHAIN`.
+
+Azure Attestation needs the PCK certificate chain in the quote. The Intel quote library adds the chain only when it can load a quote provider library. Without one, it adds the encrypted platform provisioning ID (PPID) instead, which is certification data type 0x3.
+
+To fix it:
+1. Install the Azure DCAP client (`az-dcap-client`) as in step 2 of the prerequisites. It's Azure's quote provider library and is available for Ubuntu 18.04, 20.04 and 22.04. On newer Ubuntu versions, use the Intel Quote Provider Library instead, configured as described in [Trusted Hardware Identity Management](https://learn.microsoft.com/azure/security/fundamentals/trusted-hardware-identity-management).
+2. Run `sudo ./runall.sh` in the `genquotes` directory again. When the quote contains the chain, `genquote_sgx_host` prints `cert_key_type = 0x5`.
+3. Validate the quotes only after that succeeds. A failed run doesn't replace the JSON files in `genquotes/out`, so `validatequotes.core` would still validate the old quotes in those files, such as the example quotes from this repository.

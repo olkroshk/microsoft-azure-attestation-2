@@ -146,6 +146,16 @@ int SGX_CDECL main(int argc, char *argv[])
     sgx_ql_certification_data_t *p_cert_data =
             (sgx_ql_certification_data_t *)((uint8_t *)p_auth_data + sizeof(*p_auth_data) + p_auth_data->size);
 
+    // Azure Attestation needs the PCK certificate chain in the quote. The quote library adds it only when
+    // it can load a quote provider library, such as the Azure DCAP client (az-dcap-client).
+    if (PCK_CERT_CHAIN != p_cert_data->cert_key_type) {
+        printf("\nError: the quote has certification data type 0x%x, not the PCK certificate chain (0x%x) that Azure Attestation needs.\n",
+               p_cert_data->cert_key_type, PCK_CERT_CHAIN);
+        printf("Install the Azure DCAP client (az-dcap-client) and run again. See Troubleshooting in readme.md.\n");
+        free(p_quote_buffer);
+        return -1;
+    }
+
     const int hex_buffer_size = 1024*64;
     char hex_buffer[hex_buffer_size];
 
