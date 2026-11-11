@@ -151,7 +151,7 @@ int SGX_CDECL main(int argc, char *argv[])
     if (PCK_CERT_CHAIN != p_cert_data->cert_key_type) {
         printf("\nError: the quote has certification data type 0x%x, not the PCK certificate chain (0x%x) that Azure Attestation needs.\n",
                p_cert_data->cert_key_type, PCK_CERT_CHAIN);
-        printf("Install the Azure DCAP client (az-dcap-client) and run again. See Troubleshooting in readme.md.\n");
+        printf("Install the Azure DCAP client (az-dcap-client) and run again.\n");
         free(p_quote_buffer);
         return -1;
     }
